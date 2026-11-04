@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { REST, Routes } from 'discord.js';
-import { antispamCommand } from './commands/antispam.js';
+import { getSlashCommandsJSON } from './commands/index.js';
 import { loadEnv } from './config/env.js';
 import { logger } from './utils/logger.js';
 
@@ -15,7 +15,7 @@ import { logger } from './utils/logger.js';
  */
 export async function deploySlashCommands({ token, clientId, devGuildId = null }) {
   const rest = new REST({ version: '10' }).setToken(token);
-  const commandsPayload = [antispamCommand.data.toJSON()];
+  const commandsPayload = getSlashCommandsJSON();
 
   if (devGuildId) {
     logger.info(

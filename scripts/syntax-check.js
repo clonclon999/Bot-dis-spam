@@ -49,10 +49,13 @@ async function main() {
   console.log(`   ✅ Tất cả ${srcFiles.length} module trong src/ đều import sạch không lỗi.`);
 
   console.log('🔍 [3/4] Kiểm tra định nghĩa Slash Command Discord API...');
-  const { antispamCommand } = await import(
-    pathToFileURL(path.join(ROOT, 'src/commands/antispam.js')).href
+  const { COMMAND_MAP, getSlashCommandsJSON } = await import(
+    pathToFileURL(path.join(ROOT, 'src/commands/index.js')).href
   );
-  const cmdJson = antispamCommand.data.toJSON();
+  if (!COMMAND_MAP.has('help') || !COMMAND_MAP.has('antispam')) {
+    throw new Error('Thiếu lệnh gốc bắt buộc: /help hoặc /antispam');
+  }
+  const cmdJson = COMMAND_MAP.get('antispam').data.toJSON();
   const subNames = (cmdJson.options ?? []).map((o) => o.name);
   const expectedSubs = ['on', 'off', 'config', 'whitelist', 'logs', 'status', 'reset'];
   for (const reqSub of expectedSubs) {
@@ -60,7 +63,9 @@ async function main() {
       throw new Error(`Thiếu Slash Subcommand bắt buộc: /antispam ${reqSub}`);
     }
   }
-  console.log(`   ✅ Đầy đủ ${subNames.length} Slash Subcommands: ${subNames.map((s) => `/antispam ${s}`).join(', ')}`);
+  console.log(
+    `   ✅ Đã đăng ký ${getSlashCommandsJSON().length} lệnh gốc (/help, /antispam) kèm đầy đủ ${subNames.length} subcommands.`
+  );
 
   console.log('🔍 [4/4] Quét bảo mật chống lộ Token / Secrets trong mã nguồn...');
   const allFilesToScan = [

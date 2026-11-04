@@ -66,6 +66,7 @@ Bot-dis-spam/
 
 | Lệnh | Chức năng |
 | :--- | :--- |
+| `/help [topic] [public]` | Xem hướng dẫn tổng quan, chi tiết lệnh hoặc quy tắc xử phạt (hỗ trợ mọi thành viên). |
 | `/antispam on [log_channel]` | Bật hệ thống chống spam (tùy chọn gán nhanh kênh ghi log). |
 | `/antispam off` | Tạm tắt hệ thống chống spam trên máy chủ. |
 | `/antispam config [...]` | Tùy chỉnh giới hạn mention/tin, tổng mention/khoảng ngắn, thời gian kiểm tra, chặn `@everyone`, kênh log, thời gian reset mức phạt... |

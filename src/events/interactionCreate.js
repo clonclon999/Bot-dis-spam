@@ -1,5 +1,5 @@
 import { MessageFlags } from 'discord.js';
-import { antispamCommand } from '../commands/antispam.js';
+import { COMMAND_MAP } from '../commands/index.js';
 import { buildFeedbackEmbed, COLORS } from '../utils/embeds.js';
 import { logger } from '../utils/logger.js';
 
@@ -11,10 +11,12 @@ import { logger } from '../utils/logger.js';
  */
 export async function handleInteractionCreate(interaction, context) {
   if (!interaction?.isChatInputCommand?.()) return;
-  if (interaction.commandName !== antispamCommand.data.name) return;
+
+  const command = COMMAND_MAP.get(interaction.commandName);
+  if (!command) return;
 
   try {
-    await antispamCommand.execute(interaction, context);
+    await command.execute(interaction, context);
   } catch (err) {
     logger.error(
       'InteractionCreate',

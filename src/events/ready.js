@@ -1,5 +1,5 @@
 import { ActivityType } from 'discord.js';
-import { antispamCommand } from '../commands/antispam.js';
+import { getSlashCommandsJSON } from '../commands/index.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -18,7 +18,7 @@ export async function handleClientReady(readyClient, env) {
     readyClient.user.setPresence({
       activities: [
         {
-          name: '/antispam status | Chống Spam @Mention',
+          name: '/help | Chống Spam @Mention',
           type: ActivityType.Watching,
         },
       ],
@@ -30,14 +30,14 @@ export async function handleClientReady(readyClient, env) {
 
   if (env.autoDeployCommands) {
     try {
-      const payload = [antispamCommand.data.toJSON()];
+      const payload = getSlashCommandsJSON();
       if (env.devGuildId) {
         const targetGuild = readyClient.guilds.cache.get(env.devGuildId);
         if (targetGuild) {
           await targetGuild.commands.set(payload);
           logger.info(
             'CommandSync',
-            `Đã đồng bộ Slash Command /antispam tức thì cho máy chủ DEV (${env.devGuildId}).`
+            `Đã đồng bộ ${payload.length} Slash Commands tức thì cho máy chủ DEV (${env.devGuildId}).`
           );
           return;
         }
@@ -46,7 +46,7 @@ export async function handleClientReady(readyClient, env) {
       await readyClient.application.commands.set(payload);
       logger.info(
         'CommandSync',
-        'Đã đồng bộ Slash Command /antispam ở phạm vi Toàn cục (Global).'
+        `Đã đồng bộ ${payload.length} Slash Commands (/help, /antispam) ở phạm vi Toàn cục (Global).`
       );
     } catch (err) {
       logger.error('CommandSync', 'Lỗi khi tự động đồng bộ Slash Commands', err);
