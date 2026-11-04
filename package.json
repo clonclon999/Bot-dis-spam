@@ -1,0 +1,35 @@
+{
+  "name": "discord-mention-antispam-bot",
+  "version": "1.0.0",
+  "description": "Production-ready Discord Anti-Spam Bot chuyên phát hiện và ngăn chặn spam @mention (@everyone, @here, mass mention, repeated mention) bằng Node.js & discord.js v14.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "deploy": "node src/deploy-commands.js",
+    "check": "node scripts/syntax-check.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "keywords": [
+    "discord",
+    "discord.js",
+    "antispam",
+    "anti-mention-spam",
+    "moderation",
+    "bot"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clonclon999/Bot-dis-spam.git"
+  },
+  "author": "clonclon999",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7"
+  }
+}
