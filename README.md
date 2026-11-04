@@ -1,151 +1,76 @@
-# 🛡️ Bot-dis-spam — Discord Anti-Spam @Mention Bot
+# 🎮 DISCORD GAME BOT PRO — ADVANCED ECONOMY, GAMING & ANTI-SPAM SYSTEM
 
-Hệ thống Discord Bot chuyên dụng xây dựng bằng **Node.js (ES Modules)** và **discord.js v14**, tập trung phát hiện và ngăn chặn tức thì mọi hành vi **spam `@mention`** (`@everyone`, `@here`, mention hàng loạt, mention dồn dập và mention lặp đi lặp lại) một cách chính xác, tiết kiệm bộ nhớ RAM và an toàn trên môi trường Cloud.
+Hệ thống Bot Discord đa năng chuẩn Production phát triển bằng **Node.js (ES Modules)**, **discord.js v14** và **SQLite ACID (`sql.js` WASM)**, tích hợp trọn vẹn hệ sinh thái **Kinh tế VNĐ, Ngân hàng sinh lãi, 6 Trò chơi dân gian & đối kháng công bằng (`crypto.randomInt`), Nhiệm vụ, Thú cưng, Cửa hàng, Truy nã, Sự kiện đua Top, Quản trị ADMIN PRO** cùng lá chắn **Anti-Spam `@Mention`**.
 
----
-
-## ✨ Chức năng chính
-
-- **Phát hiện `@everyone` & `@here` trái phép:** Chặn cả cờ mention thực tế lẫn văn bản thô `@everyone` / `@here` (tự động bỏ qua cú pháp nằm trong cặp dấu code `` `@everyone` `` hoặc email để tránh bắt nhầm).
-- **Chặn Mass Mention trong 1 tin nhắn:** Phát hiện khi người dùng tag vượt quá số lượng thành viên/vai trò cho phép hoặc cố tình tag lặp đi lặp lại cùng một người nhiều lần trong một tin nhắn.
-- **Chặn Mention dồn dập trong thời gian ngắn (Sliding Window Burst):** Theo dõi tổng số lượt mention trong cửa sổ trượt (mặc định `8` mention / `10` giây).
-- **Chặn Spam Mention lặp lại qua nhiều tin nhắn:** Phát hiện cả hành vi quấy rối tag cùng 1 mục tiêu liên tiếp nhiều tin nhắn lẫn rải mention qua nhiều tin nhắn ngắn.
-- **Chặn lách luật qua chỉnh sửa tin nhắn (`messageUpdate`):** Tự động kiểm tra khi người dùng gửi tin nhắn thường rồi sửa thành hàng loạt `@mention` hoặc `@everyone`.
-- **Tránh xử phạt nhầm thông minh:**
-  - Không tính mention ngầm định khi người dùng trả lời tin nhắn bằng nút **Reply** của Discord.
-  - Tự động miễn trừ **Server Owner, Administrator, Moderator** (`ManageGuild`, `ModerateMembers`, `ManageMessages`) và danh sách **Whitelist** tùy chỉnh (Vai trò, Thành viên, Kênh/Thread).
-- **Xử phạt lũy tiến tự động & chống tràn thông báo:**
-  - Tự động xóa tin nhắn vi phạm.
-  - Gửi Embed cảnh cáo nêu rõ lý do (có **cooldown chống spam ngược kênh chat** và **tự động thu hồi** sau vài giây để giữ sạch kênh).
-  - Thang xử phạt tăng dần: **Mức 1 (Cảnh cáo)** → **Mức 2 (Timeout 5 phút)** → **Mức 3 (Timeout 30 phút)** → **Mức 4 (Timeout 2 giờ)** → **Mức 5 (Timeout 24 giờ)** *(các đợt raid `@everyone` nghiêm trọng được áp dụng Timeout ngay từ lần đầu)*.
-- **Lưu trữ bền vững & Nhật ký chi tiết:** Cấu hình máy chủ và lịch sử xử lý được ghi nguyên tử (atomic write) xuống tệp JSON, không mất dữ liệu khi khởi động lại, đồng thời xuất báo cáo chi tiết ra kênh Log quản trị.
-- **Tối ưu hiệu năng & Cloud-Ready:** Giới hạn bộ đệm Discord (`makeCache` + `sweepers`), tự dọn RAM định kỳ, chống crash toàn cục và tích hợp sẵn cổng HTTP Healthcheck (`PORT`) kèm `Dockerfile`.
+Được thiết kế và tối ưu hóa chuyên biệt cho gói **FREE trên `botkeep.cloud`** (`512 MB RAM` • `50% CPU` • `1 GB Disk`) — tiêu thụ bộ nhớ cực thấp, không chạy vòng lặp ngầm gây nghẽn CPU, chống mất dữ liệu khi container khởi động lại.
 
 ---
 
-## 📂 Cấu trúc dự án
+## 🌟 Hệ Sinh Thái Tính Năng Chính (36 Slash Commands)
 
-```text
-Bot-dis-spam/
-├── src/
-│   ├── index.js                  # Điểm khởi chạy chính, chống crash & Graceful Shutdown
-│   ├── client.js                 # Khởi tạo Discord Client tối ưu RAM (Cache & Sweepers)
-│   ├── deploy-commands.js        # Công cụ đăng ký Slash Commands qua Discord REST API
-│   ├── config/
-│   │   ├── defaults.js           # Ngưỡng chống spam mặc định & thang độ Timeout
-│   │   └── env.js                # Kiểm tra tính hợp lệ của biến môi trường (.env)
-│   ├── storage/
-│   │   └── guildStore.js         # Lưu trữ cấu hình & log bền vững (RAM cache + Atomic JSON)
-│   ├── services/
-│   │   ├── mentionDetector.js    # Bộ phân tích & phát hiện spam mention cửa sổ trượt
-│   │   ├── punishmentService.js  # Xóa tin, cảnh cáo chống tràn, Timeout lũy tiến & gửi Log
-│   │   └── whitelistService.js   # Kiểm tra miễn trừ Admin/Mod & Whitelist tùy chỉnh
-│   ├── commands/
-│   │   └── antispam.js           # Toàn bộ 7 Slash Subcommands (/antispam ...)
-│   ├── events/
-│   │   ├── ready.js              # Sự kiện đăng nhập & tự đồng bộ Slash Commands
-│   │   ├── messageCreate.js      # Kiểm duyệt tin nhắn mới & tin nhắn chỉnh sửa
-│   │   └── interactionCreate.js  # Điều phối Slash Command an toàn
-│   └── utils/
-│       ├── embeds.js             # Trình tạo giao diện Discord Embed đồng nhất
-│       ├── permissions.js        # Kiểm tra quyền hạn & thứ bậc vai trò (Role Hierarchy)
-│       ├── logger.js             # Ghi log định dạng chuẩn kèm bộ lọc ẩn Token
-│       └── healthServer.js       # HTTP Healthcheck nhẹ dành cho Cloud PaaS
-├── tests/                        # Bộ kiểm thử tự động toàn diện (node:test)
-├── scripts/
-│   └── syntax-check.js           # Kiểm tra cú pháp, ES Modules import & quét rò rỉ Secret
-├── data/                         # Thư mục lưu dữ liệu bền vững khi chạy (được .gitignore bảo vệ)
-├── .env.example                  # Mẫu cấu hình biến môi trường
-├── Dockerfile                    # Đóng gói Container chạy trên Cloud / VPS
-└── package.json
-```
+### 1. 👑 Phân Quyền 4 Cấp & Đặc Quyền OWNER Cố Định
+- **`OWNER` (`1243061570247069696`)** được cố định cứng trực tiếp trong mã nguồn (`src/config/constants.js`), bất khả xâm phạm.
+- Phân cấp chặt chẽ: `OWNER > ADMIN > MODERATOR > MEMBER`.
+- Lệnh riêng `/owner` dành độc quyền cho `OWNER`: cấp/thu hồi `ADMIN` & `MODERATOR`, thu hồi toàn bộ `ADMIN`, đóng băng người chơi hoặc khóa toàn bộ giao dịch hệ thống, phát thưởng Airdrop toàn server, giám sát nhật ký thao tác của các `ADMIN`, cấu hình 7 kênh Log và quản lý danh sách Server.
+- Mọi thao tác nhạy cảm (`resetuser`, `setmoney`, `ban`, `maintenance`, `restore`, `revokeall`, `freezeall`, `airdrop`, `event stop`) đều có **bước xác nhận 2 lớp bằng nút bấm (`✅ Xác nhận thực thi` / `❌ Hủy bỏ`)**.
+
+### 2. 💰 Kinh Tế VNĐ & Ngân Hàng Lãi Kép An Toàn
+- Tiền tệ ảo duy nhất trong game: **`VNĐ`** (`/balance`, `/daily`, `/weekly`, `/monthly`, `/work`, `/beg`, `/pay`, `/top`, `/history`).
+- **Ngân hàng & Sổ tiết kiệm (`/deposit`, `/withdraw`, `/interest`):** Tính lãi suất tự động theo chu kỳ thời gian xác định (*Lazy Deterministic Accrual*) — khởi động lại Bot bao nhiêu lần hay gọi lệnh liên tiếp cũng **tuyệt đối không bao giờ cộng lãi trùng lặp**.
+- Giao dịch nguyên tử SQLite Transaction + khóa đồng bộ `ConcurrencyGuard` chặn triệt để Race Condition, spam click và số âm.
+
+### 3. 🎲 6 Trò Chơi Công Bằng Tuyệt Đối (`crypto.randomInt`)
+- **Bầu Cua (`/baucua`):** 6 linh vật (Bầu, Cua, Tôm, Cá, Gà, Nai), bàn chơi tương tác bằng **Select Menu + Buttons + Modal** hỗ trợ đặt cược nhiều cửa cùng lúc trên 1 Embed duy nhất.
+- **Tài Xỉu & Tài Xỉu Nâng Cao (`/taixiu`):** Lắc 3 xúc xắc trực quan, tự động xét Tài/Xỉu/Bão, kèm bảng thống kê tỷ lệ thắng cá nhân & lịch sử cầu gần nhất.
+- **Tung Đồng Xu (`/coinflip`):** Sấp / Ngửa nhân đôi tiền thưởng kèm nút chơi lại nhanh.
+- **Đoán Số (`/guess`):** 3 cấp độ khó (Dễ `1-5`, Trung bình `1-10`, Khó `1-25`) với hệ số thưởng tương ứng.
+- **Đua Thú (`/race`):** Cập nhật diễn biến đường đua trực tiếp trên cùng một Embed.
+- **Oẳn Tù Tì (`/rps`):** Đấu với Bot (PvE) hoặc **thách đấu trực tiếp người chơi khác (PvP)** ăn tiền VNĐ nguyên tử.
+
+### 4. 📜 Nhiệm Vụ, 🐾 Thú Cưng, 🛒 Cửa Hàng, 🥷 Truy Nã & 🎉 Sự Kiện
+- **Nhiệm vụ (`/quest daily|weekly|special|claim`):** 6 nhiệm vụ ngày, 4 nhiệm vụ tuần và nhiệm vụ đặc biệt kèm thanh tiến độ & nút nhận thưởng nhanh (chống nhận trùng).
+- **Thú cưng (`/pet shop|buy|info|feed|upgrade|rename|equip|collection`):** 6 loài từ Common đến Secret (Kỳ Lân Tinh Tú mở từ Hộp Quà), cộng Bonus EXP & thưởng Nhiệm vụ (không can thiệp RNG trò chơi).
+- **Cửa hàng (`/shop`, `/buy`, `/inventory`, `/use`, `/sell`):** Vé May Mắn, Thẻ x2 EXP, Bảo Hiểm Chống Cướp, Thức Ăn, Nước Tăng Lực, Khung Hồ Sơ, Danh Hiệu VIP và **Hộp Quà Bí Ẩn** mở thưởng thật.
+- **Hồ sơ, Cấp độ & Giang hồ (`/profile`, `/rob`, `/protect`, `/bounty`, `/wanted`):** Hệ thống Cấp độ thưởng VNĐ, 12 Danh hiệu tự động mở khóa, cướp ví tiền mặt, bảo hiểm chống cướp & săn tiền thưởng Truy Nã.
+- **Sự kiện Server (`/event list|leaderboard`):** 7 loại sự kiện đua Top & phát thưởng tự động Top 1/2/3.
+- **Quản trị `/admin` & Chống Spam `/antispam`:** 42 lệnh con quản trị chia 6 nhóm + Bảng điều khiển tương tác `/admin system dashboard` + Sao lưu/Khôi phục SQLite ngay trên Discord + Hệ thống chống spam `@Mention` chuyên sâu.
 
 ---
 
-## 🤖 Danh sách Slash Commands
+## 🚀 Hướng Dẫn Cài Đặt Lên `botkeep.cloud` (Gói FREE)
 
-| Lệnh | Chức năng |
-| :--- | :--- |
-| `/help [topic] [public]` | Xem hướng dẫn tổng quan, chi tiết lệnh hoặc quy tắc xử phạt (hỗ trợ mọi thành viên). |
-| `/antispam on [log_channel]` | Bật hệ thống chống spam (tùy chọn gán nhanh kênh ghi log). |
-| `/antispam off` | Tạm tắt hệ thống chống spam trên máy chủ. |
-| `/antispam config [...]` | Tùy chỉnh giới hạn mention/tin, tổng mention/khoảng ngắn, thời gian kiểm tra, chặn `@everyone`, kênh log, thời gian reset mức phạt... |
-| `/antispam whitelist` | Quản lý danh sách miễn trừ (`list`, `add`, `remove`, `clear`) cho **Vai trò**, **Thành viên** hoặc **Kênh**. |
-| `/antispam logs [user] [limit] [reset_strikes]` | Xem lịch sử xử lý vi phạm gần đây và đặt lại mức cảnh cáo của thành viên nếu cần. |
-| `/antispam status` | Xem trạng thái bảo vệ, kiểm tra quyền Discord của Bot và thông số RAM / Ping / Uptime. |
-| `/antispam reset [keep_logs]` | Khôi phục toàn bộ cấu hình máy chủ về mặc định ban đầu. |
+1. **Chuẩn bị trên Discord Developer Portal:**
+   - Truy cập [Discord Developer Portal](https://discord.com/developers/applications) → Chọn ứng dụng Bot của bạn.
+   - Tại mục **General Information**, sao chép **Application ID** (`CLIENT_ID`).
+   - Tại mục **Bot**:
+     - Nhấn **Reset Token** để lấy `DISCORD_TOKEN`.
+     - Kéo xuống phần **Privileged Gateway Intents**, bật **Message Content Intent** → Nhấn **Save Changes**.
+   - Mời Bot vào Server với scopes `bot` + `applications.commands` (quyền khuyến nghị: `View Channels`, `Send Messages`, `Embed Links`, `Manage Messages`, `Moderate Members`).
+
+2. **Triển khai trên `botkeep.cloud`:**
+   - Đăng nhập [botkeep.cloud](https://botkeep.cloud) → Tạo Server **Node.js (Free Plan: 512MB RAM / 1GB Disk)**.
+   - Kết nối trực tiếp kho GitHub `https://github.com/clonclon999/Bot-dis-spam` (nhánh `main`) hoặc tải lên gói mã nguồn gốc.
+   - Mở tab **Variables / Startup Environment**, điền các biến môi trường sau (không cần đẩy file `.env` lên Git):
+     ```env
+     DISCORD_TOKEN=dan_bot_token_cua_ban_vao_day
+     CLIENT_ID=dan_application_client_id_vao_day
+     AUTO_DEPLOY_COMMANDS=true
+     DATA_DIR=./data
+     LOG_LEVEL=info
+     ```
+   - Đảm bảo lệnh khởi chạy (Startup Command) là `npm install && npm start` (hoặc `node src/index.js`).
+   - Nhấn **Start**! Ngay khi trực tuyến, Bot sẽ tự động đồng bộ toàn bộ **36 Slash Commands** và khởi tạo cơ sở dữ liệu `./data/gamebot-pro.sqlite`.
+
+3. **Kiểm tra nhanh trên Discord:**
+   - Gõ `/menu` hoặc `/help` để mở trung tâm điều khiển tương tác.
+   - Tài khoản OWNER (`1243061570247069696`) có thể gõ `/admin system dashboard` hoặc `/owner logchannel` để thiết lập các kênh nhận Log và vận hành máy chủ ngay lập tức.
 
 ---
 
-## ⚙️ Hướng dẫn cài đặt & Thiết lập biến môi trường
+## 🧪 Chạy Kiểm Thử Tự Động Cục Bộ
 
-### Bước 1: Yêu cầu hệ thống
-- **Node.js** phiên bản `>= 18.18.0` (khuyên dùng Node.js 20 LTS).
-
-### Bước 2: Cài đặt thư viện
 ```bash
-git clone https://github.com/clonclon999/Bot-dis-spam.git
-cd Bot-dis-spam
 npm install
+npm run check   # Kiểm tra cú pháp 60 tệp, giới hạn Discord API (<4000 chars) & quét chống lộ Token
+npm test        # Chạy toàn bộ 29 bài kiểm thử tự động trên 13 bộ test chuyên sâu
 ```
-
-### Bước 3: Thiết lập tệp `.env`
-Sao chép tệp mẫu `.env.example` thành `.env`:
-```bash
-cp .env.example .env
-```
-Mở tệp `.env` và điền thông tin của bạn:
-```env
-DISCORD_TOKEN=your_discord_bot_token_here
-CLIENT_ID=your_discord_application_client_id_here
-DEV_GUILD_ID=
-AUTO_DEPLOY_COMMANDS=true
-DATA_DIR=./data
-LOG_LEVEL=info
-PORT=
-```
-
----
-
-## 🔗 Hướng dẫn cấu hình Discord Portal & Mời Bot vào Server
-
-1. Truy cập [Discord Developer Portal](https://discord.com/developers/applications) → Chọn ứng dụng của bạn (hoặc nhấn **New Application**).
-2. Vào tab **Bot**:
-   - Sao chép **Token** dán vào `DISCORD_TOKEN` trong `.env`.
-   - Cuộn xuống phần **Privileged Gateway Intents** → **BẮT BUỘC BẬT `Message Content Intent`** → Nhấn **Save Changes**.
-3. Vào tab **General Information**:
-   - Sao chép **Application ID** dán vào `CLIENT_ID` trong `.env`.
-4. **Mời Bot vào máy chủ Discord** bằng đường dẫn chuẩn quyền tối thiểu sau (thay `YOUR_CLIENT_ID` bằng Application ID của bạn):
-   ```text
-   https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=1374389627904&scope=bot%20applications.commands
-   ```
-   *(Mã quyền `1374389627904` cấp vừa đủ: View Channels, Send Messages, Send Messages in Threads, Manage Messages, Embed Links, Read Message History và Moderate Members / Timeout Members).*
-5. **Lưu ý phân cấp vai trò (Role Hierarchy):** Trong phần *Server Settings → Roles* của Discord, hãy kéo **vai trò của Bot nằm cao hơn** vai trò của các thành viên thông thường để Bot có quyền thực thi Timeout.
-
----
-
-## 🚀 Hướng dẫn khởi chạy & Kiểm thử
-
-```bash
-# Kiểm tra cú pháp, import ES Modules và quét an toàn bảo mật
-npm run check
-
-# Chạy toàn bộ bộ kiểm thử tự động (Unit + Integration Tests)
-npm test
-
-# (Tùy chọn) Đăng ký Slash Commands thủ công qua REST API
-npm run deploy
-
-# Khởi chạy Bot ở chế độ Production
-npm start
-
-# Khởi chạy ở chế độ phát triển (tự khởi động lại khi sửa code)
-npm run dev
-```
-
-### Chạy bằng Docker / Cloud
-```bash
-docker build -t discord-antispam-bot .
-docker run -d --name antispam-bot --restart unless-stopped --env-file .env -v $(pwd)/data:/app/data discord-antispam-bot
-```
-*(Nếu triển khai trên Render / Koyeb / Railway dạng Web Service, chỉ cần đặt biến môi trường `PORT=3000`, Bot sẽ tự mở endpoint kiểm tra sức khỏe `GET /health`).*

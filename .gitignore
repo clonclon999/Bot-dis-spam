@@ -12,8 +12,11 @@ pnpm-debug.log*
 
 # Persistent runtime data (keep directory via .gitkeep)
 data/*.json
+data/*.sqlite
+data/*.sqlite-journal
 data/*.tmp
 data/*.bak
+data/backups/
 
 # Logs & OS artifacts
 logs/

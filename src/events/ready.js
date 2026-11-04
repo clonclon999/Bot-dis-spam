@@ -11,15 +11,15 @@ import { logger } from '../utils/logger.js';
 export async function handleClientReady(readyClient, env) {
   logger.info(
     'ClientReady',
-    `Đăng nhập thành công dưới tên ${readyClient.user.tag} (${readyClient.user.id}) | Đang bảo vệ ${readyClient.guilds.cache.size} máy chủ.`
+    `Đăng nhập thành công: ${readyClient.user.tag} (${readyClient.user.id}) | Máy chủ: ${readyClient.guilds.cache.size} | RAM RSS: ${(process.memoryUsage().rss / 1048576).toFixed(1)} MB`
   );
 
   try {
     readyClient.user.setPresence({
       activities: [
         {
-          name: '/help | Chống Spam @Mention',
-          type: ActivityType.Watching,
+          name: '/menu • /help | Game Bot PRO & Anti-Spam',
+          type: ActivityType.Playing,
         },
       ],
       status: 'online',
@@ -46,7 +46,7 @@ export async function handleClientReady(readyClient, env) {
       await readyClient.application.commands.set(payload);
       logger.info(
         'CommandSync',
-        `Đã đồng bộ ${payload.length} Slash Commands (/help, /antispam) ở phạm vi Toàn cục (Global).`
+        `Đã đồng bộ ${payload.length} Slash Commands của GAME BOT PRO ở phạm vi Global.`
       );
     } catch (err) {
       logger.error('CommandSync', 'Lỗi khi tự động đồng bộ Slash Commands', err);

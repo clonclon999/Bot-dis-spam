@@ -1,0 +1,241 @@
+import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { PET_SPECIES } from '../../config/constants.js';
+import { COLORS } from '../../utils/embeds.js';
+import { formatVnd, renderProgressBar } from '../../utils/format.js';
+
+const BUYABLE_SPECIES = Object.values(PET_SPECIES)
+  .filter((p) => !p.boxOnly)
+  .map((p) => ({
+    name: `${p.emoji} ${p.name} [${p.rarity}] — ${formatVnd(p.price)}`,
+    value: p.id,
+  }));
+
+export const petCommand = {
+  data: new SlashCommandBuilder()
+    .setName('pet')
+    .setDescription('Hệ thống nuôi Thú Cưng, cho ăn, nâng cấp và bộ sưu tập thú hiếm')
+    .addSubcommand((s) =>
+      s.setName('shop').setDescription('Xem danh sách các loài thú cưng và chỉ số Bonus')
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('buy')
+        .setDescription('Nhận nuôi một thú cưng mới')
+        .addStringOption((o) =>
+          o.setName('species').setDescription('Chọn loài thú cưng').setRequired(true).addChoices(...BUYABLE_SPECIES)
+        )
+        .addStringOption((o) =>
+          o.setName('nickname').setDescription('Đặt tên riêng cho thú cưng (tùy chọn)').setRequired(false)
+        )
+    )
+    .addSubcommand((s) =>
+      s.setName('info').setDescription('Xem chi tiết thú cưng đang đồng hành cùng bạn')
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('feed')
+        .setDescription('Cho thú cưng ăn hồi độ no và tăng EXP')
+        .addIntegerOption((o) =>
+          o.setName('pet_id').setDescription('Mã ID thú cưng (bỏ trống sẽ cho thú đang trang bị ăn)').setRequired(false)
+        )
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('upgrade')
+        .setDescription('Huấn luyện nâng cấp trực tiếp cho thú cưng bằng VNĐ')
+        .addIntegerOption((o) =>
+          o.setName('pet_id').setDescription('Mã ID thú cưng (bỏ trống để nâng cấp thú đang trang bị)').setRequired(false)
+        )
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('rename')
+        .setDescription('Đổi tên mới cho thú cưng')
+        .addIntegerOption((o) =>
+          o.setName('pet_id').setDescription('Mã ID thú cưng').setRequired(true)
+        )
+        .addStringOption((o) =>
+          o.setName('name').setDescription('Tên mới (2 - 28 ký tự)').setRequired(true)
+        )
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('equip')
+        .setDescription('Chọn thú cưng đồng hành chính')
+        .addIntegerOption((o) =>
+          o.setName('pet_id').setDescription('Mã ID thú cưng trong bộ sưu tập').setRequired(true)
+        )
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('collection')
+        .setDescription('Xem toàn bộ bộ sưu tập thú cưng đã sở hữu')
+        .addUserOption((o) =>
+          o.setName('user').setDescription('Xem bộ sưu tập của người chơi khác').setRequired(false)
+        )
+    ),
+
+  async execute(interaction, { petSystem }) {
+    const sub = interaction.options.getSubcommand();
+    const uid = interaction.user.id;
+    const uname = interaction.user.username;
+
+    if (sub === 'shop') {
+      const lines = Object.values(PET_SPECIES).map((p) => {
+        const priceTag = p.boxOnly ? '🎁 *Mở từ Hộp Quà Bí Ẩn*' : `**${formatVnd(p.price)}**`;
+        return (
+          `${p.emoji} **${p.name}** • Độ hiếm: \`${p.rarity}\` — ${priceTag}\n` +
+          `  ↳ Bonus: **+${p.expBonusPct}% EXP** | **+${p.questBonusPct}% Thưởng Nhiệm vụ & Đi làm** | Hiệu ứng: *${p.effectLabel}*`
+        );
+      });
+
+      const embed = new EmbedBuilder()
+        .setColor(COLORS.PRIMARY)
+        .setTitle('🐾 Trại Thú Cưng & Linh Thú Huyền Thoại')
+        .setDescription(
+          lines.join('\n\n') +
+            '\n\n*(Lưu ý: Bonus thú cưng chỉ hỗ trợ cày EXP và Nhiệm vụ, đảm bảo các trò chơi 100% công bằng).* '
+        )
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [embed] });
+      return;
+    }
+
+    if (sub === 'buy') {
+      const speciesId = interaction.options.getString('species', true);
+      const nickname = interaction.options.getString('nickname');
+      const res = petSystem.buyPet(uid, uname, speciesId, nickname);
+
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.SUCCESS)
+            .setTitle('🎉 Nhận Nuôi Thú Cưng Thành Công!')
+            .setDescription(
+              `Chào mừng ${res.species.emoji} **${res.pet.nickname}** (ID: \`#${res.pet.id}\`) về đội của bạn!\n` +
+                `💵 Số dư ví còn lại: **${formatVnd(res.balanceAfter)}**`
+            ),
+        ],
+      });
+      return;
+    }
+
+    if (sub === 'info') {
+      const active = petSystem.getActivePetBonuses(uid);
+      if (!active.pet) {
+        await interaction.reply({
+          content: '🐾 Bạn chưa sở hữu hoặc chưa trang bị thú cưng nào! Hãy xem `/pet shop`.',
+        });
+        return;
+      }
+
+      const p = active.pet;
+      const reqExp = p.level * 100;
+      const embed = new EmbedBuilder()
+        .setColor(COLORS.INFO)
+        .setTitle(`${active.species.emoji} ${p.nickname} (ID #${p.id}) — Lv.${p.level}`)
+        .addFields(
+          { name: '🧬 Loài & Độ hiếm', value: `${active.species.name} (\`${active.species.rarity}\`)`, inline: true },
+          { name: '🍖 Độ no hiện tại', value: `${renderProgressBar(p.currentHunger, 100, 6)} (${p.currentHunger}/100)`, inline: true },
+          { name: '📈 Tiến độ cấp thú', value: `${p.exp}/${reqExp} EXP`, inline: true },
+          {
+            name: '✨ Hiệu ứng & Bonus đang kích hoạt',
+            value: `• Cộng EXP: **+${active.expBonusPct}%**\n• Cộng thưởng Nhiệm vụ/Đi làm: **+${active.questBonusPct}%**\n• Hiệu ứng hồ sơ: **${active.effectLabel}**`,
+          }
+        )
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [embed] });
+      return;
+    }
+
+    if (sub === 'feed') {
+      const petId = interaction.options.getInteger('pet_id');
+      const res = petSystem.feedPet(uid, uname, petId);
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.SUCCESS)
+            .setTitle('🍖 Cho Thú Cưng Ăn Thành Công!')
+            .setDescription(
+              `${res.species.emoji} **${res.pet.nickname}** rất thích bữa ăn này!\n` +
+                `• Nguồn thức ăn: ${res.usedBagFood ? 'Túi đồ (1x 🍖 Thức Ăn)' : `Mua nhanh (-${formatVnd(res.foodCost)})`}\n` +
+                `• Độ no hiện tại: **${res.pet.hunger}/100** | Cấp độ: **Lv.${res.pet.level}** ${res.leveledUp ? '🎉 *(Vừa lên cấp!)*' : ''}`
+            ),
+        ],
+      });
+      return;
+    }
+
+    if (sub === 'upgrade') {
+      const petId = interaction.options.getInteger('pet_id');
+      const res = petSystem.upgradePet(uid, uname, petId);
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.SUCCESS)
+            .setTitle('⬆️ Huấn Luyện Thú Cưng Lên Cấp!')
+            .setDescription(
+              `${res.species.emoji} **${res.pet.nickname}** đã thăng lên **Cấp ${res.pet.level}** (-${formatVnd(res.cost)})!\n` +
+                `💵 Ví còn lại: **${formatVnd(res.balanceAfter)}**`
+            ),
+        ],
+      });
+      return;
+    }
+
+    if (sub === 'rename') {
+      const petId = interaction.options.getInteger('pet_id', true);
+      const name = interaction.options.getString('name', true);
+      const updated = petSystem.renamePet(uid, petId, name);
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.SUCCESS)
+            .setTitle('✏️ Đổi Tên Thú Cưng Thành Công')
+            .setDescription(`Thú cưng \`#${updated.id}\` từ nay mang tên **${updated.nickname}**!`),
+        ],
+      });
+      return;
+    }
+
+    if (sub === 'equip') {
+      const petId = interaction.options.getInteger('pet_id', true);
+      const equipped = petSystem.equipPet(uid, petId);
+      await interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLORS.SUCCESS)
+            .setTitle('🐾 Đã Chọn Thú Cưng Đồng Hành')
+            .setDescription(
+              `${equipped.species?.emoji ?? '🐾'} **${equipped.nickname}** (Lv.${equipped.level}) hiện đang đồng hành cùng bạn!`
+            ),
+        ],
+      });
+      return;
+    }
+
+    // collection
+    const target = interaction.options.getUser('user') ?? interaction.user;
+    const list = petSystem.getUserPets(target.id);
+    const lines =
+      list.length > 0
+        ? list.map(
+            (p) =>
+              `• \`#${p.id}\` ${p.species?.emoji ?? '🐾'} **${p.nickname}** — **Lv.${p.level}** (\`${p.species?.rarity}\`) • Độ no: ${p.currentHunger}%`
+          )
+        : ['*Chưa sở hữu thú cưng nào.*'];
+
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(COLORS.PRIMARY)
+          .setTitle(`📚 Bộ Sưu Tập Thú Cưng — ${target.username} (${list.length} cá thể)`)
+          .setDescription(lines.join('\n')),
+      ],
+    });
+  },
+};
+
+export const PET_COMMANDS = [petCommand];

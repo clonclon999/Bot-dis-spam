@@ -1,7 +1,7 @@
 {
-  "name": "discord-mention-antispam-bot",
-  "version": "1.0.0",
-  "description": "Production-ready Discord Anti-Spam Bot chuyên phát hiện và ngăn chặn spam @mention (@everyone, @here, mass mention, repeated mention) bằng Node.js & discord.js v14.",
+  "name": "discord-gamebot-pro-and-antispam",
+  "version": "2.0.0",
+  "description": "DISCORD GAME BOT PRO – Hệ thống Kinh tế VNĐ, Ngân hàng, 6 Trò chơi công bằng (Bầu Cua, Tài Xỉu...), Nhiệm vụ, Thú cưng, Cửa hàng, Truy nã, Sự kiện, ADMIN PRO & Chống Spam @Mention tối ưu cho BotKeep Free.",
   "type": "module",
   "main": "src/index.js",
   "engines": {
@@ -17,10 +17,11 @@
   "keywords": [
     "discord",
     "discord.js",
+    "economy-bot",
+    "baucua",
+    "taixiu",
     "antispam",
-    "anti-mention-spam",
-    "moderation",
-    "bot"
+    "botkeep"
   ],
   "repository": {
     "type": "git",
@@ -30,6 +31,7 @@
   "license": "MIT",
   "dependencies": {
     "discord.js": "^14.16.3",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "sql.js": "^1.15.2"
   }
 }

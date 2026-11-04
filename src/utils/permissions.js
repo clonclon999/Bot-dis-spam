@@ -1,12 +1,58 @@
 import { PermissionFlagsBits } from 'discord.js';
+import {
+  BOT_ROLES,
+  HARDCODED_OWNER_ID,
+  ROLE_WEIGHT,
+} from '../config/constants.js';
 
 /**
- * Kiểm tra thành viên có quyền Quản trị / Điều hành để dùng lệnh cấu hình bot hay không.
- * @param {import('discord.js').GuildMember | null | undefined} member
- * @param {boolean} [allowModerators=false] - Cho phép Moderator xem status/logs
+ * Kiểm tra trực tiếp trong mã nguồn xem `userId` có phải là OWNER tối cao hay không.
+ * Không phụ thuộc database hay bất kỳ cấu hình bên ngoài nào.
+ *
+ * @param {string | null | undefined} userId
  * @returns {boolean}
  */
+export function isHardcodedOwner(userId) {
+  return String(userId) === HARDCODED_OWNER_ID;
+}
+
+/**
+ * Xác định cấp quyền hệ thống (OWNER / ADMIN / MODERATOR / MEMBER) của một người dùng.
+ * OWNER ID (`1243061570247069696`) luôn được ưu tiên tuyệt đối ở mức cao nhất.
+ *
+ * @param {import('../database/db.js').GameDatabase | null} db
+ * @param {string} userId
+ * @returns {'OWNER' | 'ADMIN' | 'MODERATOR' | 'MEMBER'}
+ */
+export function resolveBotRole(db, userId) {
+  if (isHardcodedOwner(userId)) {
+    return BOT_ROLES.OWNER;
+  }
+  if (!db) return BOT_ROLES.MEMBER;
+  const dbRole = db.getStaffRole(String(userId));
+  if (dbRole === BOT_ROLES.ADMIN) return BOT_ROLES.ADMIN;
+  if (dbRole === BOT_ROLES.MODERATOR) return BOT_ROLES.MODERATOR;
+  return BOT_ROLES.MEMBER;
+}
+
+/**
+ * Kiểm tra người dùng có đạt tối thiểu cấp quyền yêu cầu hay không.
+ * @param {import('../database/db.js').GameDatabase | null} db
+ * @param {string} userId
+ * @param {'OWNER' | 'ADMIN' | 'MODERATOR' | 'MEMBER'} minRole
+ * @returns {boolean}
+ */
+export function hasBotRole(db, userId, minRole) {
+  const actual = resolveBotRole(db, userId);
+  return (ROLE_WEIGHT[actual] ?? 0) >= (ROLE_WEIGHT[minRole] ?? 999);
+}
+
+// ============================================================================
+// Quyền hạn cấp máy chủ Discord (phục vụ module Anti-Spam @Mention)
+// ============================================================================
+
 export function canManageAntiSpam(member, allowModerators = false) {
+  if (member?.id && isHardcodedOwner(member.id)) return true;
   if (!member?.permissions) return false;
   if (member.guild?.ownerId === member.id) return true;
 
@@ -14,7 +60,6 @@ export function canManageAntiSpam(member, allowModerators = false) {
     PermissionFlagsBits.Administrator,
     PermissionFlagsBits.ManageGuild,
   ];
-
   if (adminPerms.some((perm) => member.permissions.has(perm))) {
     return true;
   }
@@ -30,12 +75,6 @@ export function canManageAntiSpam(member, allowModerators = false) {
   return false;
 }
 
-/**
- * Kiểm tra Bot có quyền xóa tin nhắn trong kênh cụ thể hay không.
- * @param {import('discord.js').GuildBasedChannel | null | undefined} channel
- * @param {import('discord.js').GuildMember | null | undefined} me
- * @returns {boolean}
- */
 export function canBotDeleteMessage(channel, me) {
   if (!channel || !me) return false;
   if (typeof channel.permissionsFor !== 'function') return false;
@@ -47,12 +86,6 @@ export function canBotDeleteMessage(channel, me) {
   );
 }
 
-/**
- * Kiểm tra Bot có quyền gửi tin nhắn & Embed vào kênh cụ thể hay không.
- * @param {import('discord.js').GuildBasedChannel | null | undefined} channel
- * @param {import('discord.js').GuildMember | null | undefined} me
- * @returns {boolean}
- */
 export function canBotSendEmbed(channel, me) {
   if (!channel || !me) return false;
   if (!channel.isTextBased?.()) return false;
@@ -66,27 +99,21 @@ export function canBotSendEmbed(channel, me) {
   );
 }
 
-/**
- * Kiểm tra đầy đủ điều kiện phân cấp vai trò (Role Hierarchy) và quyền trước khi Timeout thành viên.
- * @param {import('discord.js').GuildMember | null | undefined} targetMember
- * @param {import('discord.js').GuildMember | null | undefined} me
- * @returns {{ ok: boolean, reason?: string }}
- */
 export function checkBotCanTimeout(targetMember, me) {
   if (!targetMember) {
-    return { ok: false, reason: 'Không tìm thấy thành viên trong máy chủ (có thể đã rời server).' };
+    return { ok: false, reason: 'Không tìm thấy thành viên trong máy chủ.' };
   }
   if (!me) {
-    return { ok: false, reason: 'Không xác định được thông tin thành viên của Bot.' };
+    return { ok: false, reason: 'Không xác định được thông tin của Bot.' };
   }
   if (targetMember.guild && targetMember.id === targetMember.guild.ownerId) {
-    return { ok: false, reason: 'Không thể timeout Chủ sở hữu máy chủ (Server Owner).' };
+    return { ok: false, reason: 'Không thể timeout Chủ sở hữu máy chủ.' };
   }
   if (!me.permissions?.has(PermissionFlagsBits.ModerateMembers)) {
-    return { ok: false, reason: 'Bot thiếu quyền Moderate Members (Timeout thành viên).' };
+    return { ok: false, reason: 'Bot thiếu quyền Moderate Members.' };
   }
   if (targetMember.permissions?.has(PermissionFlagsBits.Administrator)) {
-    return { ok: false, reason: 'Thành viên có quyền Administrator (Discord không cho phép timeout).' };
+    return { ok: false, reason: 'Thành viên có quyền Administrator.' };
   }
   if (
     me.roles?.highest &&
@@ -95,21 +122,15 @@ export function checkBotCanTimeout(targetMember, me) {
   ) {
     return {
       ok: false,
-      reason: 'Vai trò cao nhất của Bot thấp hơn hoặc bằng vai trò của người vi phạm.',
+      reason: 'Vai trò của Bot thấp hơn hoặc bằng vai trò của người vi phạm.',
     };
   }
   if (targetMember.moderatable === false) {
-    return { ok: false, reason: 'Discord từ chối quyền kiểm duyệt đối với thành viên này (moderatable = false).' };
+    return { ok: false, reason: 'Discord từ chối quyền kiểm duyệt (moderatable = false).' };
   }
-
   return { ok: true };
 }
 
-/**
- * Tổng hợp báo cáo quyền hạn của Bot trong máy chủ để hiển thị trong `/antispam status`.
- * @param {import('discord.js').Guild} guild
- * @returns {{ ViewChannel: boolean, SendMessages: boolean, EmbedLinks: boolean, ManageMessages: boolean, ModerateMembers: boolean }}
- */
 export function auditBotGuildPermissions(guild) {
   const me = guild?.members?.me;
   const perms = me?.permissions;

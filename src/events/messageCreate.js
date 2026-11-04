@@ -1,56 +1,82 @@
 import { evaluateExemption } from '../services/whitelistService.js';
 import { logger } from '../utils/logger.js';
 
+/** Bộ đệm thời gian nhận EXP trò chuyện để tránh ghi SQLite liên tục khi chat nhanh */
+const chatExpCooldowns = new Map();
+const CHAT_EXP_INTERVAL_MS = 60_000;
+
 /**
- * Xử lý sự kiện tin nhắn mới (`messageCreate`).
- * Mọi lỗi phát sinh đều được bọc an toàn để không bao giờ làm sập tiến trình Bot.
- *
- * @param {import('discord.js').Message} message
- * @param {object} context
- * @param {import('../storage/guildStore.js').GuildStore} context.guildStore
- * @param {import('../services/mentionDetector.js').MentionDetector} context.mentionDetector
- * @param {import('../services/punishmentService.js').PunishmentService} context.punishmentService
+ * Xử lý sự kiện tin nhắn mới (`messageCreate`):
+ * 1. Thực thi lớp bảo vệ Anti-Spam `@Mention` trước tiên.
+ * 2. Nếu tin nhắn hợp lệ và không vi phạm, cộng nhẹ EXP tương tác định kỳ (mỗi 60s/người).
  */
-export async function handleMessageCreate(
-  message,
-  { guildStore, mentionDetector, punishmentService }
-) {
+export async function handleMessageCreate(message, context) {
+  const {
+    guildStore,
+    mentionDetector,
+    punishmentService,
+    db,
+    economySystem,
+    levelSystem,
+    questSystem,
+  } = context;
+
   try {
     if (!message || !message.guild || message.system) return;
 
-    // Nếu tin nhắn ở trạng thái partial (chưa tải đủ nội dung), thử fetch nhẹ
     if (message.partial && typeof message.fetch === 'function') {
       message = await message.fetch().catch(() => null);
       if (!message || !message.guild) return;
     }
 
-    const config = guildStore.getConfig(message.guild.id);
-    if (!config.enabled) return;
+    // Bước 1: Kiểm tra Anti-Spam @Mention nếu máy chủ đang bật
+    if (guildStore && mentionDetector && punishmentService) {
+      const config = guildStore.getConfig(message.guild.id);
+      if (config.enabled) {
+        const botUserId = message.client?.user?.id ?? null;
+        const exemption = evaluateExemption(message, config, botUserId);
+        if (!exemption.exempt) {
+          const violation = mentionDetector.inspectMessage(message, config);
+          if (violation) {
+            await punishmentService.enforce({ message, violation, config });
+            return; // Tin nhắn vi phạm không được nhận EXP chat
+          }
+        }
+      }
+    }
 
-    const botUserId = message.client?.user?.id ?? null;
-    const exemption = evaluateExemption(message, config, botUserId);
-    if (exemption.exempt) return;
-
-    const violation = mentionDetector.inspectMessage(message, config);
-    if (!violation) return;
-
-    await punishmentService.enforce({
-      message,
-      violation,
-      config,
-    });
+    // Bước 2: Thưởng EXP trò chuyện thụ động nhẹ nhàng (chống spam bằng cooldown 60 giây)
+    if (
+      !message.author?.bot &&
+      db &&
+      economySystem &&
+      levelSystem &&
+      !db.getSetting('maintenanceMode')
+    ) {
+      const uid = message.author.id;
+      const now = Date.now();
+      const prev = chatExpCooldowns.get(uid) ?? 0;
+      if (now - prev >= CHAT_EXP_INTERVAL_MS) {
+        chatExpCooldowns.set(uid, now);
+        if (chatExpCooldowns.size > 3000) {
+          for (const [k, ts] of chatExpCooldowns.entries()) {
+            if (now - ts > CHAT_EXP_INTERVAL_MS) chatExpCooldowns.delete(k);
+          }
+        }
+        const u = economySystem.ensureUser(uid, message.author.username, now);
+        if (!u.is_banned) {
+          levelSystem.grantExp(uid, 12, now);
+          questSystem?.incrementMetric(uid, 'messages_sent', 1, now);
+        }
+      }
+    }
   } catch (err) {
-    logger.error('MessageCreateEvent', 'Lỗi không mong muốn khi kiểm tra tin nhắn', err);
+    logger.error('MessageCreateEvent', 'Lỗi không mong muốn khi xử lý tin nhắn', err);
   }
 }
 
 /**
- * Xử lý sự kiện chỉnh sửa tin nhắn (`messageUpdate`) nhằm chặn hành vi lách luật
- * gửi tin nhắn thường rồi sửa thành hàng loạt @mention / @everyone.
- *
- * @param {import('discord.js').Message | import('discord.js').PartialMessage} oldMessage
- * @param {import('discord.js').Message | import('discord.js').PartialMessage} newMessage
- * @param {object} context
+ * Xử lý sự kiện chỉnh sửa tin nhắn (`messageUpdate`) chặn lách luật sửa tin nhắn thành spam @mention.
  */
 export async function handleMessageUpdate(
   oldMessage,
@@ -58,7 +84,7 @@ export async function handleMessageUpdate(
   { guildStore, mentionDetector, punishmentService }
 ) {
   try {
-    if (!newMessage) return;
+    if (!newMessage || !guildStore || !mentionDetector || !punishmentService) return;
 
     if (newMessage.partial && typeof newMessage.fetch === 'function') {
       newMessage = await newMessage.fetch().catch(() => null);

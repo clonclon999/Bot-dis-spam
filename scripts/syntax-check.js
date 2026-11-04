@@ -27,8 +27,44 @@ function collectJsFiles(dir) {
   return results;
 }
 
+/**
+ * Tính tổng độ dài ký tự của một Slash Command theo đúng quy tắc kiểm duyệt của Discord REST API v10 (tối đa 4.000 ký tự/lệnh).
+ */
+function measureDiscordNodeChars(node, breadcrumb) {
+  if (!/^[a-z0-9_-]{1,32}$/.test(node.name)) {
+    throw new Error(`Tên không hợp lệ tại ${breadcrumb}: "${node.name}"`);
+  }
+  if (!node.description || node.description.length > 100) {
+    throw new Error(
+      `Mô tả vượt 100 ký tự (${node.description?.length}) tại ${breadcrumb}`
+    );
+  }
+  let total = node.name.length + node.description.length;
+
+  if (Array.isArray(node.choices)) {
+    if (node.choices.length > 25) {
+      throw new Error(`Vượt quá 25 choices tại ${breadcrumb}`);
+    }
+    for (const ch of node.choices) {
+      total += String(ch.name).length + String(ch.value).length;
+    }
+  }
+
+  if (Array.isArray(node.options)) {
+    if (node.options.length > 25) {
+      throw new Error(
+        `Vượt quá 25 options/subcommands (${node.options.length}) tại ${breadcrumb}`
+      );
+    }
+    for (const opt of node.options) {
+      total += measureDiscordNodeChars(opt, `${breadcrumb}.${opt.name}`);
+    }
+  }
+  return total;
+}
+
 async function main() {
-  console.log('🔍 [1/4] Kiểm tra cấu trúc dự án & cú pháp (node --check)...');
+  console.log('🔍 [1/5] Kiểm tra cấu trúc dự án & cú pháp (node --check)...');
   const jsFiles = SCAN_DIRS.flatMap((d) => collectJsFiles(d));
   if (jsFiles.length === 0) {
     throw new Error('Không tìm thấy tệp mã nguồn JavaScript nào!');
@@ -39,7 +75,7 @@ async function main() {
   }
   console.log(`   ✅ Đã kiểm tra cú pháp thành công ${jsFiles.length} tệp .js.`);
 
-  console.log('🔍 [2/4] Kiểm tra ES Modules import thực tế (trừ index.js khởi chạy trực tiếp)...');
+  console.log('🔍 [2/5] Kiểm tra ES Modules import thực tế...');
   const srcFiles = collectJsFiles('src').filter(
     (f) => path.basename(f) !== 'index.js'
   );
@@ -48,36 +84,63 @@ async function main() {
   }
   console.log(`   ✅ Tất cả ${srcFiles.length} module trong src/ đều import sạch không lỗi.`);
 
-  console.log('🔍 [3/4] Kiểm tra định nghĩa Slash Command Discord API...');
+  console.log('🔍 [3/5] Xác thực quyền tối cao HARDCODED_OWNER_ID...');
+  const { HARDCODED_OWNER_ID } = await import(
+    pathToFileURL(path.join(ROOT, 'src/config/constants.js')).href
+  );
+  if (HARDCODED_OWNER_ID !== '1243061570247069696') {
+    throw new Error(`HARDCODED_OWNER_ID sai lệch: ${HARDCODED_OWNER_ID}`);
+  }
+  console.log(`   ✅ HARDCODED_OWNER_ID cố định chuẩn xác: ${HARDCODED_OWNER_ID}`);
+
+  console.log('🔍 [4/5] Kiểm duyệt chuẩn giới hạn Discord Slash Command API v10...');
   const { COMMAND_MAP, getSlashCommandsJSON } = await import(
     pathToFileURL(path.join(ROOT, 'src/commands/index.js')).href
   );
-  if (!COMMAND_MAP.has('help') || !COMMAND_MAP.has('antispam')) {
-    throw new Error('Thiếu lệnh gốc bắt buộc: /help hoặc /antispam');
+  const payload = getSlashCommandsJSON();
+  if (payload.length > 100) {
+    throw new Error(`Vượt quá 100 Global Commands của Discord (${payload.length})`);
   }
-  const cmdJson = COMMAND_MAP.get('antispam').data.toJSON();
-  const subNames = (cmdJson.options ?? []).map((o) => o.name);
-  const expectedSubs = ['on', 'off', 'config', 'whitelist', 'logs', 'status', 'reset'];
-  for (const reqSub of expectedSubs) {
-    if (!subNames.includes(reqSub)) {
-      throw new Error(`Thiếu Slash Subcommand bắt buộc: /antispam ${reqSub}`);
+
+  const requiredNames = [
+    'help', 'menu', 'balance', 'daily', 'weekly', 'monthly', 'pay', 'top',
+    'history', 'work', 'beg', 'deposit', 'withdraw', 'interest',
+    'baucua', 'taixiu', 'coinflip', 'guess', 'race', 'rps',
+    'quest', 'shop', 'buy', 'inventory', 'use', 'sell', 'pet',
+    'profile', 'rob', 'protect', 'bounty', 'wanted', 'event',
+    'admin', 'owner', 'antispam',
+  ];
+  for (const req of requiredNames) {
+    if (!COMMAND_MAP.has(req)) {
+      throw new Error(`Thiếu Slash Command bắt buộc: /${req}`);
+    }
+  }
+
+  let maxCmdChars = 0;
+  let maxCmdName = '';
+  for (const cmd of payload) {
+    const chars = measureDiscordNodeChars(cmd, `/${cmd.name}`);
+    if (chars > 4000) {
+      throw new Error(
+        `Lệnh /${cmd.name} vượt giới hạn 4.000 ký tự của Discord (${chars} ký tự)!`
+      );
+    }
+    if (chars > maxCmdChars) {
+      maxCmdChars = chars;
+      maxCmdName = cmd.name;
     }
   }
   console.log(
-    `   ✅ Đã đăng ký ${getSlashCommandsJSON().length} lệnh gốc (/help, /antispam) kèm đầy đủ ${subNames.length} subcommands.`
+    `   ✅ Đã kiểm duyệt ${payload.length} Slash Commands hợp lệ 100% (Lệnh lớn nhất /${maxCmdName}: ${maxCmdChars}/4000 ký tự).`
   );
 
-  console.log('🔍 [4/4] Quét bảo mật chống lộ Token / Secrets trong mã nguồn...');
+  console.log('🔍 [5/5] Quét bảo mật chống lộ Token / Secrets trong mã nguồn...');
   const allFilesToScan = [
     ...jsFiles,
     path.join(ROOT, 'package.json'),
     path.join(ROOT, '.env.example'),
     path.join(ROOT, 'README.md'),
   ].filter((f) => fs.existsSync(f));
-
-  if (fs.existsSync(path.join(ROOT, '.env'))) {
-    console.warn('   ⚠️ Phát hiện tệp .env cục bộ — đảm bảo .gitignore đã chặn commit.');
-  }
 
   for (const file of allFilesToScan) {
     if (path.basename(file) === 'syntax-check.js' || path.basename(file) === 'logger.js') {
@@ -92,11 +155,11 @@ async function main() {
       }
     }
   }
-  console.log('   ✅ Không phát hiện bất kỳ token hay thông tin nhạy cảm nào trong mã nguồn.');
-  console.log('\n🎉 Toàn bộ kiểm tra cấu trúc, cú pháp, import và bảo mật đều ĐẠT 100%!');
+  console.log('   ✅ Không phát hiện bất kỳ Token hoặc thông tin nhạy cảm nào bị lộ.');
+  console.log('\n🎉 TOÀN BỘ KIỂM TRA HỆ THỐNG ĐỀU VƯỢT QUA XUẤT SẮC!');
 }
 
 main().catch((err) => {
-  console.error('❌ Kiểm tra thất bại:', err);
+  console.error('\n❌ KIỂM TRA THẤT BẠI:', err.message || err);
   process.exit(1);
 });

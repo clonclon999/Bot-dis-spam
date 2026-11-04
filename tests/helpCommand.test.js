@@ -3,102 +3,100 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { MessageFlags, PermissionsBitField } from 'discord.js';
-import { getSlashCommandsJSON, COMMAND_MAP } from '../src/commands/index.js';
-import { handleInteractionCreate } from '../src/events/interactionCreate.js';
-import { GuildStore } from '../src/storage/guildStore.js';
+import {
+  COMMAND_MAP,
+  getSlashCommandsJSON,
+  routeComponentInteraction,
+} from '../src/commands/index.js';
+import { createBotSystems } from '../src/systems/index.js';
 
-function createHelpInteraction({
-  topic = null,
-  isPublic = null,
-  isAdmin = false,
-  inGuild = true,
-}) {
-  const replies = [];
-  const guild = {
-    id: 'guild-help-1',
-    name: 'Help Test Server',
-    ownerId: 'owner-1',
-  };
-
-  return {
-    isChatInputCommand: () => true,
-    commandName: 'help',
-    inGuild: () => inGuild,
-    guildId: inGuild ? guild.id : null,
-    guild: inGuild ? guild : null,
-    member: inGuild
-      ? {
-          id: isAdmin ? 'admin-1' : 'member-1',
-          guild,
-          permissions: new PermissionsBitField(
-            isAdmin ? [PermissionsBitField.Flags.ManageGuild] : []
-          ),
-        }
-      : null,
-    options: {
-      getString: (name) => (name === 'topic' ? topic : null),
-      getBoolean: (name) => (name === 'public' ? isPublic : null),
-    },
-    reply: async (payload) => {
-      replies.push(payload);
-      return payload;
-    },
-    getLastReply: () => replies[replies.length - 1],
-  };
-}
-
-describe('Slash Command /help & Central Command Registry', () => {
-  it('đăng ký đầy đủ /help và /antispam trong COMMAND_MAP với mô tả hợp lệ <= 100 ký tự', () => {
+describe('Slash Command /help, /menu & Central 36-Command Registry', () => {
+  it('đăng ký đầy đủ 36 Slash Commands chuẩn giới hạn Discord API', () => {
     const allJson = getSlashCommandsJSON();
-    assert.equal(allJson.length, 2);
-    assert.ok(COMMAND_MAP.has('help'));
-    assert.ok(COMMAND_MAP.has('antispam'));
+    assert.equal(allJson.length, 36);
+    for (const name of [
+      'help', 'menu', 'balance', 'daily', 'baucua', 'taixiu',
+      'quest', 'shop', 'pet', 'profile', 'rob', 'event', 'admin', 'owner', 'antispam',
+    ]) {
+      assert.ok(COMMAND_MAP.has(name), `Thiếu lệnh /${name}`);
+    }
 
     for (const cmd of allJson) {
       assert.ok(cmd.description.length >= 1 && cmd.description.length <= 100);
-      for (const opt of cmd.options ?? []) {
-        assert.ok(opt.description.length >= 1 && opt.description.length <= 100);
-      }
     }
   });
 
-  it('hiển thị đúng cả 3 chủ đề /help và ngăn thành viên thường gửi công khai làm loãng kênh', async () => {
-    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'antispam-help-'));
+  it('hiển thị đầy đủ 6 danh mục /help qua Select Menu và thao tác nhanh trên /menu', async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'gamebot-help-'));
     try {
-      const guildStore = new GuildStore(tmpDir);
-      await guildStore.init();
-      guildStore.updateConfig('guild-help-1', { maxMentionsPerMessage: 7 });
+      const systems = await createBotSystems(tmpDir);
+      try {
+        const helpCmd = COMMAND_MAP.get('help');
+        let lastReply = null;
+        await helpCmd.execute({
+          user: { id: 'u-help-1', username: 'Tester' },
+          options: { getString: () => 'games' },
+          reply: async (p) => {
+            lastReply = p;
+          },
+        });
+        assert.match(lastReply.embeds[0].data.title, /GAMES/);
+        assert.equal(lastReply.components.length, 1);
 
-      // 1. Mặc định (overview) + thành viên thường cố bật public: true -> vẫn bị ép Ephemeral
-      const memberTryPublic = createHelpInteraction({
-        topic: null,
-        isPublic: true,
-        isAdmin: false,
-      });
-      await handleInteractionCreate(memberTryPublic, { guildStore });
-      const r1 = memberTryPublic.getLastReply();
-      assert.equal(r1.flags, MessageFlags.Ephemeral);
-      assert.match(r1.embeds[0].data.title, /Hướng dẫn Sử dụng/);
-      assert.match(r1.embeds[0].data.fields[0].value, /\*\*7\*\* mention/);
+        // Chuyển danh mục ngay trên cùng Embed bằng Select Menu
+        let updatedPayload = null;
+        const handled = await routeComponentInteraction(
+          {
+            customId: 'core:help_cat:u-help-1',
+            user: { id: 'u-help-1', username: 'Tester' },
+            isStringSelectMenu: () => true,
+            values: ['economy'],
+            update: async (p) => {
+              updatedPayload = p;
+            },
+          },
+          systems
+        );
+        assert.equal(handled, true);
+        assert.match(updatedPayload.embeds[0].data.title, /ECONOMY/);
 
-      // 2. Chủ đề commands + Admin bật public: true -> được gửi công khai (không gắn cờ Ephemeral)
-      const adminPublicCmds = createHelpInteraction({
-        topic: 'commands',
-        isPublic: true,
-        isAdmin: true,
-      });
-      await handleInteractionCreate(adminPublicCmds, { guildStore });
-      const r2 = adminPublicCmds.getLastReply();
-      assert.equal(r2.flags, undefined);
-      assert.match(r2.embeds[0].data.title, /Danh sách Chi tiết/);
+        // Kiểm tra /menu + bấm nút điểm danh /daily trực tiếp trên /menu
+        const menuCmd = COMMAND_MAP.get('menu');
+        let menuReply = null;
+        await menuCmd.execute(
+          {
+            user: {
+              id: 'u-help-1',
+              username: 'Tester',
+              displayAvatarURL: () => 'https://cdn.discordapp.com/embed/avatars/0.png',
+            },
+            reply: async (p) => {
+              menuReply = p;
+            },
+          },
+          systems
+        );
+        assert.ok(menuReply.embeds[0]);
 
-      // 3. Chủ đề rules
-      const rulesInt = createHelpInteraction({ topic: 'rules', isAdmin: false });
-      await handleInteractionCreate(rulesInt, { guildStore });
-      const r3 = rulesInt.getLastReply();
-      assert.equal(r3.flags, MessageFlags.Ephemeral);
-      assert.match(r3.embeds[0].data.title, /Quy tắc Phát hiện/);
+        let menuUpdated = null;
+        await routeComponentInteraction(
+          {
+            customId: 'core:menu_daily:u-help-1',
+            user: {
+              id: 'u-help-1',
+              username: 'Tester',
+              displayAvatarURL: () => 'https://cdn.discordapp.com/embed/avatars/0.png',
+            },
+            update: async (p) => {
+              menuUpdated = p;
+            },
+          },
+          systems
+        );
+        assert.match(menuUpdated.embeds[0].data.fields[0].name, /Điểm Danh Thành Công/);
+      } finally {
+        await systems.db.close();
+      }
     } finally {
       await fsp.rm(tmpDir, { recursive: true, force: true });
     }

@@ -1,16 +1,53 @@
+import { ADMIN_COMMANDS, handleAdminInteraction } from './admin/index.js';
+import { sweepPendingConfirmations } from './admin/confirmStore.js';
 import { antispamCommand } from './antispam.js';
-import { helpCommand } from './help.js';
+import { CORE_COMMANDS, handleCoreInteraction } from './core/index.js';
+import { ECONOMY_COMMANDS } from './economy/index.js';
+import { EVENT_COMMANDS } from './events/index.js';
+import {
+  GAME_COMMANDS,
+  handleGameInteraction,
+  sweepGameSessions,
+} from './games/index.js';
+import { PET_COMMANDS } from './pets/index.js';
+import { PROFILE_AND_CRIME_COMMANDS } from './profile/index.js';
+import { handleQuestInteraction, QUEST_COMMANDS } from './quests/index.js';
+import { handleShopInteraction, SHOP_COMMANDS } from './shop/index.js';
 
-export const COMMANDS = Object.freeze([antispamCommand, helpCommand]);
+export const commands = [
+  ...CORE_COMMANDS,
+  ...ECONOMY_COMMANDS,
+  ...GAME_COMMANDS,
+  ...QUEST_COMMANDS,
+  ...SHOP_COMMANDS,
+  ...PET_COMMANDS,
+  ...PROFILE_AND_CRIME_COMMANDS,
+  ...EVENT_COMMANDS,
+  ...ADMIN_COMMANDS,
+  antispamCommand,
+];
 
-export const COMMAND_MAP = new Map(
-  COMMANDS.map((cmd) => [cmd.data.name, cmd])
-);
+export const commandMap = new Map(commands.map((cmd) => [cmd.data.name, cmd]));
+export const COMMAND_MAP = commandMap;
 
 /**
- * Xuất danh sách JSON của toàn bộ Slash Commands để đăng ký lên Discord API.
- * @returns {Array<object>}
+ * Chuyển đổi toàn bộ danh sách Slash Commands sang JSON payload gửi lên Discord API v10.
  */
 export function getSlashCommandsJSON() {
-  return COMMANDS.map((cmd) => cmd.data.toJSON());
+  return commands.map((cmd) => cmd.data.toJSON());
+}
+
+/**
+ * Định tuyến toàn bộ tương tác Nút bấm (Button), Menu chọn (Select Menu) và Biểu mẫu (Modal).
+ */
+export async function routeComponentInteraction(interaction, context) {
+  sweepGameSessions();
+  sweepPendingConfirmations();
+
+  if (await handleGameInteraction(interaction, context)) return true;
+  if (await handleQuestInteraction(interaction, context)) return true;
+  if (await handleShopInteraction(interaction, context)) return true;
+  if (await handleCoreInteraction(interaction, context)) return true;
+  if (await handleAdminInteraction(interaction, context)) return true;
+  return false;
 }

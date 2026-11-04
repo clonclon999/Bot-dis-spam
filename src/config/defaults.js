@@ -1,34 +1,77 @@
 /**
- * Cấu hình mặc định và các hằng số hệ thống cho Discord Anti-Spam Bot.
- * Mọi giá trị ở đây có thể tùy chỉnh theo từng máy chủ thông qua `/antispam config`.
+ * Cấu hình mặc định toàn cục cho Kinh tế, Ngân hàng, Trò chơi, Bảo trì
+ * và hệ thống Chống Spam @Mention.
  */
 
+export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
+  maintenanceMode: false,
+  maintenanceReason: 'Hệ thống đang bảo trì nâng cấp định kỳ.',
+  freezeAllTransactions: false,
+  protectStaffFromRob: true,
+
+  // Kinh tế VNĐ
+  startingBalance: 20_000,
+  dailyReward: 15_000,
+  weeklyReward: 80_000,
+  monthlyReward: 300_000,
+  workMin: 3_000,
+  workMax: 12_000,
+  workCooldownSec: 300, // 5 phút
+  begMin: 500,
+  begMax: 3_500,
+  begCooldownSec: 180, // 3 phút
+  questRewardMultiplier: 1.0,
+  gamePayoutMultiplier: 1.0,
+
+  // Giới hạn cược
+  minBet: 1_000,
+  maxBet: 5_000_000,
+
+  // Ngân hàng
+  bankInterestRate: 0.02, // 2% mỗi chu kỳ cho tài khoản thường
+  savingsInterestBonus: 1.5, // Tài khoản tiết kiệm hưởng x1.5 lãi suất (3%)
+  interestIntervalHours: 24, // Chu kỳ trả lãi 24 giờ
+  maxBankDeposit: 500_000_000,
+  minLevelForBank: 1,
+  minDepositForSavings: 50_000,
+
+  // Cướp & Truy nã
+  robCooldownSec: 600, // 10 phút
+  robSuccessRatePct: 40, // 40%
+  robMaxStealPct: 15, // Cướp tối đa 15% tiền mặt nạn nhân
+  robMaxCap: 250_000, // Trần cướp tối đa 1 lần
+  robFailFinePct: 12, // Phạt 12% ví của kẻ đi cướp khi thất bại
+  robFailBounty: 15_000, // Tự động treo thưởng truy nã khi cướp hụt
+
+  // Bật / tắt từng trò chơi
+  gamesEnabled: {
+    baucua: true,
+    taixiu: true,
+    coinflip: true,
+    guess: true,
+    race: true,
+    rps: true,
+  },
+
+  // Kênh log chuyên biệt
+  logChannels: {
+    economy: null,
+    game: null,
+    admin: null,
+    anticheat: null,
+    quest: null,
+    event: null,
+    error: null,
+  },
+});
+
+// Hằng số hệ thống Anti-Spam @Mention (giữ tương thích hoàn toàn)
 export const ESCALATION_LADDER = Object.freeze([
-  Object.freeze({
-    level: 1,
-    timeoutSeconds: 0,
-    label: 'Mức 1 — Cảnh cáo & Xóa tin nhắn',
-  }),
-  Object.freeze({
-    level: 2,
-    timeoutSeconds: 5 * 60, // 5 phút
-    label: 'Mức 2 — Timeout 5 phút',
-  }),
-  Object.freeze({
-    level: 3,
-    timeoutSeconds: 30 * 60, // 30 phút
-    label: 'Mức 3 — Timeout 30 phút',
-  }),
-  Object.freeze({
-    level: 4,
-    timeoutSeconds: 2 * 60 * 60, // 2 giờ
-    label: 'Mức 4 — Timeout 2 giờ',
-  }),
-  Object.freeze({
-    level: 5,
-    timeoutSeconds: 24 * 60 * 60, // 24 giờ
-    label: 'Mức 5 — Timeout 24 giờ (Nghiêm trọng)',
-  }),
+  Object.freeze({ level: 1, timeoutSeconds: 0, label: 'Mức 1 — Cảnh cáo & Xóa tin nhắn' }),
+  Object.freeze({ level: 2, timeoutSeconds: 5 * 60, label: 'Mức 2 — Timeout 5 phút' }),
+  Object.freeze({ level: 3, timeoutSeconds: 30 * 60, label: 'Mức 3 — Timeout 30 phút' }),
+  Object.freeze({ level: 4, timeoutSeconds: 2 * 60 * 60, label: 'Mức 4 — Timeout 2 giờ' }),
+  Object.freeze({ level: 5, timeoutSeconds: 24 * 60 * 60, label: 'Mức 5 — Timeout 24 giờ (Nghiêm trọng)' }),
 ]);
 
 export const VIOLATION_TYPES = Object.freeze({
@@ -61,16 +104,12 @@ export const DEFAULT_GUILD_CONFIG = Object.freeze({
 
 export const SYSTEM_LIMITS = Object.freeze({
   MAX_LOGS_PER_GUILD: 100,
-  MAX_TRACKED_USERS_PER_GUILD: 5000,
-  TRACKER_SWEEP_INTERVAL_MS: 60_000,
+  MAX_TRACKED_USERS_PER_GUILD: 2500,
+  TRACKER_SWEEP_INTERVAL_MS: 120_000,
   CONTENT_PREVIEW_MAX_LENGTH: 300,
   DISCORD_MAX_TIMEOUT_SECONDS: 28 * 24 * 60 * 60,
 });
 
-/**
- * Tạo bản sao sâu an toàn cho cấu hình mặc định của một máy chủ mới.
- * @returns {object}
- */
 export function createDefaultGuildConfig() {
   return {
     ...DEFAULT_GUILD_CONFIG,

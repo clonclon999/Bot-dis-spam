@@ -5,33 +5,26 @@ import {
   Options,
   Partials,
 } from 'discord.js';
+import { safeHandleInteraction } from './events/interactionCreate.js';
 import {
   handleMessageCreate,
   handleMessageUpdate,
 } from './events/messageCreate.js';
-import { handleInteractionCreate } from './events/interactionCreate.js';
 import { handleClientReady } from './events/ready.js';
 import { logger } from './utils/logger.js';
 
 /**
- * Khởi tạo Discord Client được tối ưu hóa bộ nhớ RAM cho môi trường Cloud:
- * - Chỉ bật đúng các Gateway Intents cần thiết (`Guilds`, `GuildMessages`, `MessageContent`).
- * - Tắt bộ đệm (cache) của các thành phần không dùng đến (Presence, Reaction, Voice, Invite...)
- *   và giới hạn số lượng tin nhắn lưu tạm mỗi kênh nhằm giữ mức tiêu thụ RAM cực thấp.
+ * Khởi tạo Discord Client tối ưu hóa bộ nhớ RAM cực thấp cho gói `botkeep.cloud` FREE (512 MB RAM):
+ * - Chỉ bật các Gateway Intents thực sự cần thiết.
+ * - Giới hạn chặt bộ đệm tin nhắn và vô hiệu hóa toàn bộ các bộ đệm dư thừa (Presence, Voice, Reaction...).
  *
  * @param {object} deps
  * @param {object} deps.env
- * @param {import('./storage/guildStore.js').GuildStore} deps.guildStore
- * @param {import('./services/mentionDetector.js').MentionDetector} deps.mentionDetector
- * @param {import('./services/punishmentService.js').PunishmentService} deps.punishmentService
+ * @param {object} deps.systems - Tổ hợp hệ thống tạo bởi `createBotSystems`
  * @returns {import('discord.js').Client}
  */
-export function createBotClient({
-  env,
-  guildStore,
-  mentionDetector,
-  punishmentService,
-}) {
+export function createBotClient({ env, systems, ...legacyDeps }) {
+  const activeContext = systems ?? legacyDeps;
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -41,7 +34,7 @@ export function createBotClient({
     partials: [Partials.Message, Partials.Channel],
     makeCache: Options.cacheWithLimits({
       ...Options.DefaultMakeCacheSettings,
-      MessageManager: 30, // Chỉ giữ tối đa 30 tin nhắn gần nhất mỗi kênh (hỗ trợ messageUpdate)
+      MessageManager: 25,
       ReactionManager: 0,
       ReactionUserManager: 0,
       PresenceManager: 0,
@@ -56,32 +49,28 @@ export function createBotClient({
     sweepers: {
       ...Options.DefaultSweeperSettings,
       messages: {
-        interval: 300, // Quét dọn mỗi 5 phút
-        lifetime: 600, // Xóa khỏi bộ đệm các tin nhắn cũ hơn 10 phút
+        interval: 300,
+        lifetime: 600,
       },
     },
   });
 
-  const sharedContext = {
-    guildStore,
-    mentionDetector,
-    punishmentService,
-  };
+  activeContext?.logSystem?.attachClient?.(client);
 
   client.once(Events.ClientReady, (readyClient) =>
     handleClientReady(readyClient, env)
   );
 
   client.on(Events.MessageCreate, (message) =>
-    handleMessageCreate(message, sharedContext)
+    handleMessageCreate(message, activeContext)
   );
 
   client.on(Events.MessageUpdate, (oldMsg, newMsg) =>
-    handleMessageUpdate(oldMsg, newMsg, sharedContext)
+    handleMessageUpdate(oldMsg, newMsg, activeContext)
   );
 
   client.on(Events.InteractionCreate, (interaction) =>
-    handleInteractionCreate(interaction, sharedContext)
+    safeHandleInteraction(interaction, activeContext)
   );
 
   client.on(Events.Error, (err) => {
