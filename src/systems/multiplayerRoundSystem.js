@@ -1938,7 +1938,7 @@ export class MultiplayerRoundSystem {
 
       // BƯỚC 6–7: Hiển thị Animation quay kết quả (`DRAWING`) khi phiên có hoặc không có người xem
       if (!skipAnimation && this.animationDelayMs > 0) {
-        await this._renderBoardNow(key, { phase: 'DRAWING' });
+        await this._renderBoardNow(key, { phase: 'DRAWING', forcedCountdownSec: 0 });
         await new Promise((resolve) => setTimeout(resolve, this.animationDelayMs));
       }
 
@@ -2746,10 +2746,35 @@ export class MultiplayerRoundSystem {
       }
     };
 
-    // Các mốc cảnh báo chuẩn Mục 5: 30s -> 10s -> 5s -> 0s khóa sổ
+    // Các mốc cảnh báo chuẩn Mục 5 + Đếm ngược trực tiếp từng giây cuối: 30s -> 10s -> 5s -> 3 -> 2 -> 1 -> 0s HẾT THỜI GIAN!
     addMilestone(30_000, 'notified_30s', '30s');
     addMilestone(10_000, 'notified_10s', '10s');
     addMilestone(5_000, 'notified_5s', '5s');
+
+    const addFinalCountdownTick = (sec) => {
+      const thresholdMs = sec * 1000;
+      if (remMs > thresholdMs + 120) {
+        const delay = remMs - thresholdMs;
+        const t = setTimeout(() => {
+          timers.delete(t);
+          const cur = this.db.get(
+            'SELECT status, ends_at FROM multiplayer_rounds WHERE round_id = ?',
+            [key]
+          );
+          if (!cur || cur.status !== MP_ROUND_STATUS.BETTING) return;
+          this._renderBoardNow(key, {
+            milestone: `${sec}s`,
+            forcedCountdownSec: sec,
+          }).catch(() => {});
+        }, delay);
+        if (typeof t.unref === 'function') t.unref();
+        timers.add(t);
+      }
+    };
+
+    addFinalCountdownTick(3);
+    addFinalCountdownTick(2);
+    addFinalCountdownTick(1);
 
     const endTimer = setTimeout(() => {
       timers.delete(endTimer);
@@ -2766,6 +2791,11 @@ export class MultiplayerRoundSystem {
   _scheduleBoardRender(roundId, delayMs = 350) {
     const key = String(roundId);
     if (this._renderDebounce.has(key)) return;
+    const cur = this.db.get('SELECT ends_at, status FROM multiplayer_rounds WHERE round_id = ?', [key]);
+    if (cur && cur.status === MP_ROUND_STATUS.BETTING && Number(cur.ends_at) - this._now() <= 3400) {
+      // Trong 3 giây đếm ngược cuối (3 -> 2 -> 1 -> 0), nhịp đếm ngược mỗi giây sẽ tự động gom luôn cập nhật cược để không chạm Rate Limit Discord!
+      return;
+    }
     const t = setTimeout(() => {
       this._renderDebounce.delete(key);
       this._renderBoardNow(key, { phase: 'BET_UPDATE' }).catch(() => {});

@@ -8,14 +8,14 @@ Tối ưu hóa chuyên biệt cho gói **FREE trên `botkeep.cloud`** (`512 MB R
 
 ## 🌟 Hệ Sinh Thái Tính Năng Chính (39 Slash Commands — Discord Components V2 + 3D Visuals)
 
-### 1. 🚀 HỆ THỐNG PHIÊN CƯỢC CHUNG TOÀN SERVER — PUBLIC START (`/game`)
-- **PUBLIC START 100% (Ưu tiên số 1):** BẤT KỲ thành viên thường nào trong Server *(không cần quyền `OWNER`, `ADMIN`, `MODERATOR` hay quyền quản trị Discord)* đều có thể mở phiên cược chung mới qua `/game start <tro_choi>` hoặc bấm nút công khai **`🚀 Mở phiên tiếp theo`** / **`🚀 Mở Phiên Chung`** trong `/games`.
+### 1. 🚀 HỆ THỐNG PHIÊN CƯỢC CHUNG TOÀN SERVER — GỘP TRỰC TIẾP VÀO `/baucua`, `/taixiu`, `/race` & `/game`
+- **GỘP TRỰC TIẾP `START` VÀO LỆNH TRÒ CHƠI (PUBLIC START 100%):** Thành viên trong Server chỉ cần gõ thẳng **`/baucua`**, **`/taixiu`** hoặc **`/race`** ngay tại kênh trò chơi *(hoặc dùng `/game start`, nút **`▶️ START / 🚀 Mở phiên tiếp theo`**)* để **tự động mở phiên cược chung mới** nếu chưa có phiên đang chạy, hoặc **tham gia/đặt cược ngay vào phiên đang mở** (VD: `/baucua cua:tom tien_cuoc_moi_cua:20000`). Vẫn giữ tùy chọn `che_do: ca_nhan` nếu muốn lắc lẻ 1 người.
 - **Chống tạo trùng phiên tuyệt đối:** Khóa Mutex theo `(guildId, gameId)` + SQLite Transaction đảm bảo dù 10 thành viên bấm `START` cùng một micro-giây cũng chỉ tạo duy nhất **1 phiên đang mở** và hiển thị liên kết tới phiên đó. Người mở phiên được vinh danh trên bảng phiên nhưng **không có bất kỳ quyền can thiệp quản trị nào**.
 - **3 Trò Chơi Phiên Chung Dùng Chung 1 Kết Quả Duy Nhất (`crypto.randomInt` lưu DB trước khi quay):**
   - **🦀 Bầu Cua 3D (`60s` mặc định):** 6 cửa (`Bầu, Cua, Tôm, Cá, Gà, Nai`), trả thưởng **`2x` (1 nháy) / `3x` (2 nháy) / `4x` (3 nháy đồng nhất)**.
   - **🎲 Tài Xỉu Casino 3D (`60s` mặc định):** 2 cửa (`TÀI 11–17`, `XỈU 4–10`), trả thưởng **`2x`**; công bố rõ luật **Bộ ba đồng nhất `3` (`1-1-1`) hoặc `18` (`6-6-6`) Nhà cái thắng**.
   - **🏇 Đua Thú 3D (`90s` mặc định):** 5 chiến thú tranh tài chung toàn phòng, chiến thú về hạng `#1` trả thưởng **`4.5x`**.
-- **Vòng Đời Phiên Tự Động & Mốc Đếm Ngược:** `WAITING -> BETTING -> LOCKED -> DRAWING -> SETTLING -> COMPLETED / CANCELLED` với thông báo mốc `30s`, cảnh báo sắp khóa `10s`, hiệu ứng `5s` cuối và khóa sổ tức thì ở `0s` theo DB Timestamp (chỉnh sửa tin nhắn tại chỗ, không spam kênh).
+- **Vòng Đời Phiên Tự Động & Đếm Ngược `3 • 2 • 1 • HẾT THỜI GIAN!`:** `WAITING -> BETTING -> LOCKED -> DRAWING -> SETTLING -> COMPLETED / CANCELLED` với mốc cảnh báo `30s`, `10s`, `5s` và **nhịp đếm ngược trực tiếp từng giây cuối `[ 3 GIÂY ] ➔ [ 2 GIÂY ] ➔ [ 1 GIÂY CUỐI! ] ➔ 🛑 HẾT THỜI GIAN!`** khóa sổ tức thì theo DB Timestamp (chỉnh sửa tin nhắn tại chỗ, không spam kênh).
 - **🔄 AUTO NEXT ROUND SYSTEM (Tự Động Mở Phiên Tiếp Theo):**
   - Mặc định **BẬT** cho **Bầu Cua (`60s`)** & **Tài Xỉu (`60s`)** với **thời gian nghỉ `10 giây`** sau khi hoàn tất thanh toán (`COMPLETED`).
   - Bảng kết quả hiển thị đầy đủ danh sách thắng/thua, tổng tiền thanh toán, thông báo **`"PHIÊN TIẾP THEO SẮP BẮT ĐẦU"`**, thời gian nghỉ còn lại và `Round ID` mới khi phiên kế tiếp khởi chạy mà không spam tin nhắn trong kênh.
@@ -55,5 +55,5 @@ Tối ưu hóa chuyên biệt cho gói **FREE trên `botkeep.cloud`** (`512 MB R
 ```bash
 npm install
 npm run check   # Kiểm tra cú pháp 83 tệp .js, 50 ES Modules, 39 Slash Commands (<4000 chars), OWNER ID & quét chống lộ Token
-npm test        # Chạy toàn bộ 61 bài kiểm thử tự động trên 20 bộ test (bao gồm Auto Stop When No Players, Auto Next Round, Public Start, ACID Concurrency, Restart Recovery & Components V2)
+npm test        # Chạy toàn bộ 62 bài kiểm thử tự động trên 20 bộ test (bao gồm Gộp /baucua-/taixiu-/race, Đếm ngược 3-2-1, Auto Stop, Auto Next, Public Start & Components V2)
 ```

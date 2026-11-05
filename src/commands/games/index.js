@@ -64,6 +64,7 @@ import {
   gamesCommand,
   handleGameCenterInteraction,
 } from './gameCenter.js';
+import { handlePublicStartRoundInteraction } from './multiplayerRound.js';
 import {
   buildNoituLobbyPayload,
   handleNoituInteraction,
@@ -1244,16 +1245,44 @@ export function openVisualGameLauncher(gameId, user, guildId, channelId, systems
 const baucuaCommand = {
   data: new SlashCommandBuilder()
     .setName('baucua')
-    .setDescription('Mở bàn cược Components V2 Bầu Cua PRO MAX (lưới 6 linh vật, thưởng 2x/3x/4x)')
+    .setDescription('Mở hoặc tham gia ngay Phiên Bầu Cua 3D chung toàn Server (thưởng 2x/3x/4x, đếm ngược 3-2-1)')
     .setContexts(InteractionContextType.Guild)
+    .addStringOption((o) =>
+      o
+        .setName('cua')
+        .setDescription('Tùy chọn: Chọn cửa đặt cược ngay vào phiên chung')
+        .addChoices(
+          ...BAUCUA_MASCOTS.map((m) => ({ name: `${m.emoji} ${m.name}`, value: m.id }))
+        )
+    )
     .addIntegerOption((o) =>
-      o.setName('tien_cuoc_moi_cua').setDescription('Tùy chọn: Mức phỉnh khởi tạo ban đầu (VNĐ)').setMinValue(100)
+      o.setName('tien_cuoc_moi_cua').setDescription('Tùy chọn: Số tiền đặt cược ngay hoặc phỉnh nhanh (VNĐ)').setMinValue(100)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('che_do')
+        .setDescription('Chế độ bàn chơi (Mặc định: Mở/Vào Phiên Cược Chung Toàn Server)')
+        .addChoices(
+          { name: '🌐 Phiên Cược Chung Toàn Server (Mặc định)', value: 'chung' },
+          { name: '👤 Bàn Lắc Nhanh Cá Nhân', value: 'ca_nhan' }
+        )
     ),
 
   async execute(interaction, ctx) {
     const systems = getSys(ctx);
     systems.gameSystem.assertGameAllowed(GAME_IDS.BAUCUA);
-    const preset = interaction.options?.getInteger?.('tien_cuoc_moi_cua');
+    const mode = interaction.options?.getString?.('che_do') || 'chung';
+    const choice = interaction.options?.getString?.('cua') || null;
+    const preset = interaction.options?.getInteger?.('tien_cuoc_moi_cua') || null;
+
+    if (interaction.guildId && mode !== 'ca_nhan') {
+      await handlePublicStartRoundInteraction(interaction, systems, GAME_IDS.BAUCUA, {
+        initialChoice: choice,
+        initialBet: preset,
+      });
+      return;
+    }
+
     if (preset) {
       upsertBettingDraft(GAME_IDS.BAUCUA, interaction.user.id, { activeChip: preset });
     }
@@ -1264,26 +1293,44 @@ const baucuaCommand = {
 const taixiuCommand = {
   data: new SlashCommandBuilder()
     .setName('taixiu')
-    .setDescription('Sòng Tài Xỉu Casino Components V2 (Xỉu 4–10, Tài 11–17, Tổng 3/18 Nhà cái thắng)')
+    .setDescription('Mở hoặc tham gia ngay Phiên Tài Xỉu 3D chung toàn Server (Xỉu 4–10, Tài 11–17, đếm ngược 3-2-1)')
     .setContexts(InteractionContextType.Guild)
     .addStringOption((o) =>
       o
         .setName('cua')
-        .setDescription('Tùy chọn: Lắc nhanh Tài hoặc Xỉu (bỏ trống để mở Bàn Casino tương tác)')
+        .setDescription('Tùy chọn: Chọn cửa TÀI hoặc XỈU để đặt ngay vào phiên')
         .addChoices(
           { name: '🔴 TÀI (11 - 17)', value: 'tai' },
           { name: '🔵 XỈU (4 - 10)', value: 'xiu' }
         )
     )
     .addIntegerOption((o) =>
-      o.setName('tien_cuoc').setDescription('Tùy chọn: Số tiền cược VNĐ').setMinValue(100)
+      o.setName('tien_cuoc').setDescription('Tùy chọn: Số tiền đặt cược VNĐ').setMinValue(100)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('che_do')
+        .setDescription('Chế độ bàn chơi (Mặc định: Mở/Vào Phiên Cược Chung Toàn Server)')
+        .addChoices(
+          { name: '🌐 Phiên Cược Chung Toàn Server (Mặc định)', value: 'chung' },
+          { name: '👤 Bàn Lắc Nhanh Cá Nhân', value: 'ca_nhan' }
+        )
     ),
 
   async execute(interaction, ctx) {
     const systems = getSys(ctx);
     systems.gameSystem.assertGameAllowed(GAME_IDS.TAIXIU);
+    const mode = interaction.options?.getString?.('che_do') || 'chung';
     const choice = interaction.options?.getString?.('cua');
     const bet = interaction.options?.getInteger?.('tien_cuoc');
+
+    if (interaction.guildId && mode !== 'ca_nhan') {
+      await handlePublicStartRoundInteraction(interaction, systems, GAME_IDS.TAIXIU, {
+        initialChoice: choice || null,
+        initialBet: bet || null,
+      });
+      return;
+    }
 
     if (!choice || !bet) {
       if (choice || bet) {
@@ -1390,23 +1437,41 @@ const guessCommand = {
 const raceCommand = {
   data: new SlashCommandBuilder()
     .setName('race')
-    .setDescription('Đặt cược Đua Thú Tốc Độ Components V2 với đường đua tiến trình từng chặng (thưởng 4.5x)')
+    .setDescription('Mở hoặc tham gia ngay Phiên Đua Thú 3D chung toàn Server (thưởng 4.5x, đếm ngược 3-2-1)')
     .setContexts(InteractionContextType.Guild)
     .addStringOption((o) =>
       o
         .setName('thu_dua')
-        .setDescription('Tùy chọn: Chọn chiến thú (bỏ trống để mở bảng chọn thú)')
+        .setDescription('Tùy chọn: Chọn chiến thú đặt cược ngay vào phiên')
         .addChoices(...RACE_ANIMALS.map((a) => ({ name: `${a.emoji} ${a.name}`, value: a.id })))
     )
     .addIntegerOption((o) =>
-      o.setName('tien_cuoc').setDescription('Tùy chọn: Số tiền cược VNĐ').setMinValue(100)
+      o.setName('tien_cuoc').setDescription('Tùy chọn: Số tiền đặt cược VNĐ').setMinValue(100)
+    )
+    .addStringOption((o) =>
+      o
+        .setName('che_do')
+        .setDescription('Chế độ bàn chơi (Mặc định: Mở/Vào Phiên Cược Chung Toàn Server)')
+        .addChoices(
+          { name: '🌐 Phiên Cược Chung Toàn Server (Mặc định)', value: 'chung' },
+          { name: '👤 Đường Đua Nhanh Cá Nhân', value: 'ca_nhan' }
+        )
     ),
 
   async execute(interaction, ctx) {
     const systems = getSys(ctx);
     systems.gameSystem.assertGameAllowed(GAME_IDS.RACE);
+    const mode = interaction.options?.getString?.('che_do') || 'chung';
     const animalId = interaction.options?.getString?.('thu_dua');
     const bet = interaction.options?.getInteger?.('tien_cuoc');
+
+    if (interaction.guildId && mode !== 'ca_nhan') {
+      await handlePublicStartRoundInteraction(interaction, systems, GAME_IDS.RACE, {
+        initialChoice: animalId || null,
+        initialBet: bet || null,
+      });
+      return;
+    }
 
     if (!animalId || !bet) {
       if (animalId || bet) {

@@ -265,18 +265,32 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
   // ==========================================================================
   if (round.status === MP_ROUND_STATUS.BETTING || round.status === MP_ROUND_STATUS.WAITING) {
     const endsUnix = Math.floor(Number(round.ends_at) / 1000);
+    const cdSec =
+      typeof meta.forcedCountdownSec === 'number' ? meta.forcedCountdownSec : remainingSec;
     let accent = THEME.NEON_CYAN;
     let countdownHeadline = `🟢 **TRẠNG THÁI PHIÊN:** \`${round.status}\` — Đang mở nhận cược công khai!`;
 
-    if (remainingSec <= 5 || round.notified_5s) {
+    if (cdSec === 1) {
+      accent = THEME.CRIMSON_NEON;
+      countdownHeadline =
+        '🚨 **ĐẾM NGƯỢC CUỐI PHIÊN:** `3` ➔ `2` ➔ **`[ 1 GIÂY CUỐI! ]`** — **SẮP HẾT THỜI GIAN!**';
+    } else if (cdSec === 2) {
+      accent = THEME.CRIMSON_NEON;
+      countdownHeadline =
+        '🚨 **ĐẾM NGƯỢC CUỐI PHIÊN:** `3` ➔ **`[ 2 GIÂY ]`** ➔ `1` — **KHẨN TRƯƠNG CHỐT CỬA!**';
+    } else if (cdSec === 3) {
+      accent = THEME.CRIMSON_NEON;
+      countdownHeadline =
+        '🚨 **ĐẾM NGƯỢC CUỐI PHIÊN:** **`[ 3 GIÂY ]`** ➔ `2` ➔ `1` — **CHUẨN BỊ KHÓA SỔ!**';
+    } else if (cdSec <= 5 || round.notified_5s) {
       accent = THEME.CRIMSON_NEON;
       countdownHeadline =
         '🔥 **ĐẾM NGƯỢC 5 GIÂY CUỐI:** `5 • 4 • 3 • 2 • 1` — **CHUẨN BỊ KHÓA SỔ & MỞ BÁT!**';
-    } else if (remainingSec <= 10 || round.notified_10s) {
+    } else if (cdSec <= 10 || round.notified_10s) {
       accent = THEME.AMBER_PULSE;
       countdownHeadline =
         '⚠️ **CẢNH BÁO SẮP KHÓA CƯỢC:** Chỉ còn dưới **10 giây** cuối cùng!';
-    } else if (remainingSec <= 30 || round.notified_30s) {
+    } else if (cdSec <= 30 || round.notified_30s) {
       accent = THEME.NEON_GOLD;
       countdownHeadline =
         '⏰ **THÔNG BÁO 30 GIÂY:** Còn nửa chặng cuối — Nhanh tay chọn cửa may mắn!';
@@ -372,13 +386,13 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
   ) {
     const animAtt = buildAssetAttachment(gameMeta.animPath, gameMeta.animName);
     const drawContainer = createContainer({
-      accentColor: THEME.NEON_GOLD,
+      accentColor: THEME.CRIMSON_NEON,
       children: [
         mediaGallery([{ url: animAtt.url, description: `${gameMeta.title} — Đang mở kết quả` }]),
         textDisplay(
           [
-            `## 🎰 ${gameMeta.title} — \`#${round.round_id}\``,
-            `🔒 **TRẠNG THÁI:** \`${round.status}\` — **ĐÃ KHÓA SỔ NHẬN CƯỢC & ĐANG QUAY KẾT QUẢ CHUNG!**`,
+            `## 🛑 3 ➔ 2 ➔ 1 ➔ HẾT THỜI GIAN! — \`#${round.round_id}\``,
+            `🔒 **TRẠNG THÁI:** \`${round.status}\` — **ĐÃ KHÓA SỔ NHẬN CƯỢC & ĐANG LẮC BÁT MỞ KẾT QUẢ CHUNG!**`,
             `👤 **Người mở phiên:** ${formatStarterDisplay(round)}  •  👥 **Tham gia:** **${round.total_players} người**  •  💰 **Tổng quỹ cược:** **${formatVnd(round.total_bet_vnd)}**`,
             '',
             buildDoorSummaryLines(round.game_id, doorStats),
@@ -565,6 +579,10 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
     resChildren.push(mediaGallery(rollGallery.items));
   }
 
+  const wonDisplay =
+    Number(round.total_won_vnd) > 0 ? `+${formatVnd(round.total_won_vnd)}` : '0 VNĐ';
+  const lostDisplay =
+    Number(round.total_lost_vnd) > 0 ? `-${formatVnd(round.total_lost_vnd)}` : '0 VNĐ';
   const isAutoStoppedRoom = round.auto_next_state === 'AUTO_STOPPED_NO_PLAYERS';
   const autoNextBlock = buildAutoNextStatusLines(round, gameMeta);
   resChildren.push(
@@ -575,7 +593,7 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
         `• 👥 **Tổng số người chơi:** **${round.total_players} người**`,
         `• 💰 **Tổng tiền cược:** **${formatVnd(round.total_bet_vnd)}**`,
         `• 💳 **Tổng tiền thanh toán:** **${formatVnd(round.total_payout_vnd)}**`,
-        `• 🟢 **Tổng tiền thắng (lãi ròng):** **+${formatVnd(round.total_won_vnd)}**  •  🔴 **Tổng tiền thua:** **-${formatVnd(round.total_lost_vnd)}**`,
+        `• 🟢 **Tổng tiền thắng (lãi ròng):** **${wonDisplay}**  •  🔴 **Tổng tiền thua:** **${lostDisplay}**`,
         '',
         `🏅 **DANH SÁCH NGƯỜI THẮNG (${winners.length}):**`,
         winnersText,
@@ -805,7 +823,12 @@ function buildMultiplayerLeaderboardPayload(guildId, gameId, systems, { ephemera
 // Hàm Dùng Chung Mở Phiên Cho Cả `/game start` Lẫn Nút `Mở phiên tiếp theo` (PUBLIC 100%)
 // ============================================================================
 
-export async function handlePublicStartRoundInteraction(interaction, systems, gameId) {
+export async function handlePublicStartRoundInteraction(
+  interaction,
+  systems,
+  gameId,
+  { initialChoice = null, initialBet = null } = {}
+) {
   const guildId = interaction.guildId;
   if (!guildId) {
     await safeReplyV2(
@@ -818,6 +841,11 @@ export async function handlePublicStartRoundInteraction(interaction, systems, ga
       })
     );
     return;
+  }
+
+  // Nếu người chơi truyền mức phỉnh nhanh qua lệnh (VD: /baucua tien_cuoc_moi_cua:10000), lưu phỉnh 1 chạm cho họ!
+  if (Number.isFinite(initialBet) && initialBet > 0 && !initialChoice) {
+    systems.multiplayerRoundSystem.setUserChipPreference(interaction.user.id, initialBet);
   }
 
   // Kiểm tra kênh trò chơi đã cấu hình (nếu Admin có thiết lập kênh riêng cho game này)
@@ -849,9 +877,47 @@ export async function handlePublicStartRoundInteraction(interaction, systems, ga
     return;
   }
 
-  // Nếu đã có phiên đang chạy -> KHÔNG tạo phiên trùng, hiển thị ngay phiên hiện tại để người chơi đặt cược!
+  const activeRoundId = startRes.round?.round_id || startRes.snapshot?.round?.round_id;
+  let autoBetResult = null;
+  if (initialChoice && Number.isFinite(initialBet) && initialBet > 0 && activeRoundId) {
+    autoBetResult = await systems.multiplayerRoundSystem.placeBet({
+      roundId: activeRoundId,
+      userId: interaction.user.id,
+      username: interaction.user.username,
+      choice: initialChoice,
+      amount: initialBet,
+    });
+  }
+
+  // Nếu đã có phiên đang chạy -> KHÔNG tạo phiên trùng: đặt cược thẳng (nếu có truyền cửa + tiền) hoặc hiển thị phiên hiện tại!
   if (!startRes.created) {
-    const snap = startRes.snapshot;
+    if (autoBetResult) {
+      if (!autoBetResult.ok) {
+        await safeReplyV2(
+          interaction,
+          buildCv2NoticePayload({
+            title: '⚠️ Không Thể Đặt Cược Vào Phiên Chung',
+            body: autoBetResult.error,
+            accentColor: THEME.CRIMSON_NEON,
+            ephemeral: true,
+          })
+        );
+        return;
+      }
+      const freshSnap = systems.multiplayerRoundSystem.getRoundSnapshot(activeRoundId);
+      await safeReplyV2(
+        interaction,
+        buildUserRoundReceiptPayload(
+          freshSnap,
+          interaction.user.id,
+          systems,
+          `✅ Đã đặt cược **${formatVnd(initialBet)}** vào cửa **${String(initialChoice).toUpperCase()}** của phiên chung \`#${activeRoundId}\`!`
+        )
+      );
+      return;
+    }
+
+    const snap = systems.multiplayerRoundSystem.getRoundSnapshot(activeRoundId) || startRes.snapshot;
     const activePayload = buildMultiplayerBoardPayload(snap, systems, {
       isEdit: false,
       ephemeral: true,
@@ -876,9 +942,11 @@ export async function handlePublicStartRoundInteraction(interaction, systems, ga
     return;
   }
 
-  const boardPayload = buildMultiplayerBoardPayload(startRes.snapshot, systems, { isEdit: false });
+  const latestSnapshot =
+    systems.multiplayerRoundSystem.getRoundSnapshot(activeRoundId) || startRes.snapshot;
+  const boardPayload = buildMultiplayerBoardPayload(latestSnapshot, systems, { isEdit: false });
 
-  // Trường hợp người chơi mở phiên ngay tại kênh trò chơi
+  // Trường hợp người chơi mở phiên ngay tại kênh trò chơi (VD: gõ /baucua ngay trong #bau_cua)
   if (targetChannelId === interaction.channelId) {
     const replyRes = await interaction.reply({
       ...boardPayload,
@@ -887,6 +955,18 @@ export async function handlePublicStartRoundInteraction(interaction, systems, ga
     const sentMsg = replyRes?.resource?.message ?? replyRes ?? null;
     if (sentMsg) {
       systems.multiplayerRoundSystem.registerMessageRef(startRes.round.round_id, sentMsg);
+    }
+    if (autoBetResult && !autoBetResult.ok && typeof interaction.followUp === 'function') {
+      await interaction
+        .followUp(
+          buildCv2NoticePayload({
+            title: '⚠️ Đã Mở Phiên Chung Nhưng Chưa Thể Đặt Cược Tự Động',
+            body: autoBetResult.error,
+            accentColor: THEME.AMBER_PULSE,
+            ephemeral: true,
+          })
+        )
+        .catch(() => {});
     }
     return;
   }

@@ -510,4 +510,107 @@ describe('UPDATE PRO MAX – AUTO STOP WHEN NO PLAYERS (All 7 Mandatory Scenario
       await fsp.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('8. Gộp trực tiếp game start vào /baucua, /taixiu, /race + Đếm ngược 3 -> 2 -> 1 -> HẾT THỜI GIAN! + Ảnh con vật 3D chân thực 400x400', async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autostop-t8-'));
+    try {
+      const systems = await createBotSystems(tmpDir);
+      systems.multiplayerRoundSystem.animationDelayMs = 0;
+
+      try {
+        systems.db.setGameChannel('guild-unify', 'baucua', 'chan-baucua', HARDCODED_OWNER_ID);
+        systems.economySystem.ensureUser('u-unify-1', 'PlayerA');
+        systems.economySystem.ensureUser('u-unify-2', 'PlayerB');
+        systems.db.run("UPDATE users SET wallet = 100000 WHERE user_id IN ('u-unify-1', 'u-unify-2')");
+
+        // 1) Thành viên A chỉ cần gõ thẳng `/baucua` trong kênh `#chan-baucua` -> Mở luôn Phiên Cược Chung!
+        let openedPayload = null;
+        await COMMAND_MAP.get('baucua').execute(
+          {
+            guildId: 'guild-unify',
+            channelId: 'chan-baucua',
+            channel: { id: 'chan-baucua', parentId: null },
+            user: { id: 'u-unify-1', username: 'PlayerA' },
+            replied: false,
+            deferred: false,
+            options: {
+              getString: () => null,
+              getInteger: () => null,
+            },
+            reply: async (p) => {
+              openedPayload = p;
+              return { resource: { message: { id: 'msg-unify-bc', edit: async () => {} } } };
+            },
+          },
+          systems
+        );
+
+        assert.ok(openedPayload);
+        assert.equal(validateCv2Payload(openedPayload).valid, true);
+        const actives = systems.multiplayerRoundSystem.getActiveRounds('guild-unify', GAME_IDS.BAUCUA);
+        assert.equal(actives.length, 1, '/baucua phải tự động mở ngay phiên cược chung như game start');
+        const roundId = actives[0].round_id;
+
+        // 2) Thành viên B gõ `/baucua cua:tom tien_cuoc_moi_cua:20000` -> Vào thẳng phiên chung đang mở và đặt 20.000 VNĐ cửa Tôm!
+        let receiptPayload = null;
+        await COMMAND_MAP.get('baucua').execute(
+          {
+            guildId: 'guild-unify',
+            channelId: 'chan-baucua',
+            channel: { id: 'chan-baucua', parentId: null },
+            user: { id: 'u-unify-2', username: 'PlayerB' },
+            replied: false,
+            deferred: false,
+            options: {
+              getString: (k) => (k === 'cua' ? 'tom' : null),
+              getInteger: (k) => (k === 'tien_cuoc_moi_cua' ? 20_000 : null),
+            },
+            reply: async (p) => {
+              receiptPayload = p;
+            },
+          },
+          systems
+        );
+        assert.ok(receiptPayload);
+        assert.equal(validateCv2Payload(receiptPayload).valid, true);
+        assert.match(extractCv2Text(receiptPayload), /20\.000 VNĐ.*TÔM|TOM/);
+
+        const snapLive = systems.multiplayerRoundSystem.getRoundSnapshot(roundId);
+        assert.equal(snapLive.round.total_players, 1);
+        assert.equal(snapLive.round.total_bet_vnd, 20_000);
+
+        // 3) Kiểm tra giao diện đếm ngược 3 -> 2 -> 1 -> HẾT THỜI GIAN!
+        const p3 = buildMultiplayerBoardPayload(snapLive, systems, {
+          isEdit: true,
+          forcedCountdownSec: 3,
+        });
+        const p2 = buildMultiplayerBoardPayload(snapLive, systems, {
+          isEdit: true,
+          forcedCountdownSec: 2,
+        });
+        const p1 = buildMultiplayerBoardPayload(snapLive, systems, {
+          isEdit: true,
+          forcedCountdownSec: 1,
+        });
+        assert.match(extractCv2Text(p3), /\[ 3 GIÂY \]/);
+        assert.match(extractCv2Text(p2), /\[ 2 GIÂY \]/);
+        assert.match(extractCv2Text(p1), /\[ 1 GIÂY CUỐI! \]/);
+
+        const lockedSnap = {
+          ...snapLive,
+          round: { ...snapLive.round, status: MP_ROUND_STATUS.DRAWING },
+        };
+        const p0 = buildMultiplayerBoardPayload(lockedSnap, systems, {
+          isEdit: true,
+          forcedCountdownSec: 0,
+        });
+        assert.equal(validateCv2Payload(p0).valid, true);
+        assert.match(extractCv2Text(p0), /3 ➔ 2 ➔ 1 ➔ HẾT THỜI GIAN!/);
+      } finally {
+        await closeTestSystems(systems);
+      }
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

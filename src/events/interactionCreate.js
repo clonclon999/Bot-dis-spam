@@ -166,8 +166,15 @@ export async function handleInteractionCreate(interaction, context) {
       if (!command) return;
       await command.execute(interaction, context);
 
+      const isSharedMpSlash =
+        (interaction.commandName === GAME_IDS.BAUCUA ||
+          interaction.commandName === GAME_IDS.TAIXIU ||
+          interaction.commandName === GAME_IDS.RACE) &&
+        interaction.options?.getString?.('che_do') !== 'ca_nhan';
+
       const isLiveSharedBoard =
         interaction.commandName === 'game' ||
+        isSharedMpSlash ||
         (interaction.commandName === GAME_IDS.NOITU &&
           ['create', 'join', 'start', 'surrender'].includes(
             interaction.options?.getSubcommand?.(false)
