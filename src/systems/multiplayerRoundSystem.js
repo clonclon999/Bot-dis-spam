@@ -104,6 +104,12 @@ export class MultiplayerRoundSystem {
     this._userChipPrefs = new Map();
 
     this._seqCounter = 0;
+
+    /** @type {Map<string, Set<number>>} roundId -> các mốc giây đã chat đếm ngược (chống trùng) */
+    this._countdownChat = new Map();
+
+    /** @type {Map<string, number>} roundId -> timestamp tin nhắn "HẾT THỜI GIAN" đã gửi */
+    this._timeUpChat = new Map();
   }
 
   attachClient(client) {
@@ -1974,6 +1980,8 @@ export class MultiplayerRoundSystem {
           ]
         );
         await this._renderBoardNow(key, { phase: 'LOCKED' });
+        // 🗣️ Chat "HẾT THỜI GIAN — ĐANG MỞ BÁT" lên kênh (1 lần/phiên)
+        await this.chatTimeUp(key).catch(() => {});
       }
 
       // BƯỚC 4–5: Sinh MỘT kết quả chung duy nhất (hoặc đọc lại nếu đã lưu trước khi crash!) và LƯU VÀO DB TRƯỚC KHI HIỂN THỊ
@@ -2346,6 +2354,9 @@ export class MultiplayerRoundSystem {
       return finalSnapshot;
     } finally {
       this._finalizingRounds.delete(key);
+      // Dọn dấu vết chống trùng thông báo đếm ngược sau khi phiên đã chốt xong (giữ RAM thấp)
+      const gc = setTimeout(() => this._clearCountdownChatMarks(key), 30_000);
+      gc.unref?.();
     }
   }
 
@@ -2783,6 +2794,166 @@ export class MultiplayerRoundSystem {
     }
   }
 
+  /**
+   * Xóa dấu vết chống trùng thông báo đếm ngược của một phiên (giữ RAM thấp).
+   * @param {string} roundId
+   */
+  _clearCountdownChatMarks(roundId) {
+    const key = String(roundId);
+    this._countdownChat.delete(key);
+    this._timeUpChat.delete(key);
+  }
+
+  /**
+   * Lấy đối tượng kênh Discord của phiên (cache trước, sau đó fetch).
+   * @param {string} channelId
+   */
+  async _resolveRoundChannel(channelId) {
+    if (!this.client || !channelId) return null;
+    try {
+      const cached = this.client.channels?.cache?.get(String(channelId));
+      if (cached) return cached;
+      if (typeof this.client.channels?.fetch === 'function') {
+        return await this.client.channels.fetch(String(channelId)).catch(() => null);
+      }
+    } catch {
+      // Bỏ qua: không có quyền/kênh đã xóa thì bỏ nhịp chat này
+    }
+    return null;
+  }
+
+  /**
+   * Nhãn ngắn (emoji + tên) của trò chơi dùng cho các tin nhắn đếm ngược.
+   * @param {string} gameId
+   */
+  _countdownGameMeta(gameId) {
+    const map = {
+      [GAME_IDS.BAUCUA]: { emoji: '🦀', title: 'BẦU CUA TÔM CÁ' },
+      [GAME_IDS.TAIXIU]: { emoji: '🎲', title: 'TÀI XỈU' },
+      [GAME_IDS.RACE]: { emoji: '🏇', title: 'ĐUA THÚ' },
+    };
+    return map[gameId] || map[GAME_IDS.BAUCUA];
+  }
+
+  /**
+   * 🗣️ CHAT ĐẾM NGƯỢC LÊN KÊNH: mỗi mốc `3`, `2`, `1` Bot gửi hẳn MỘT tin nhắn vào kênh
+   * (không chỉ sửa bảng) để cả server nhìn thấy, sau đó tự xóa sau vài giây cho gọn kênh.
+   * Chống trùng tuyệt đối: mỗi phiên chỉ chat đúng 1 lần cho mỗi mốc giây.
+   *
+   * @param {string} roundId
+   * @param {number} sec 3 | 2 | 1
+   * @returns {Promise<boolean>}
+   */
+  async chatCountdown(roundId, sec) {
+    const key = String(roundId);
+    const step = Number(sec);
+    if (![3, 2, 1].includes(step)) return false;
+
+    const done = this._countdownChat.get(key) ?? new Set();
+    if (done.has(step)) return false;
+
+    const round = this.db.get(
+      'SELECT round_id, channel_id, game_id, status, ends_at FROM multiplayer_rounds WHERE round_id = ?',
+      [key]
+    );
+    if (!round) return false;
+    if (round.status !== MP_ROUND_STATUS.BETTING) return false;
+
+    const channel = await this._resolveRoundChannel(round.channel_id);
+    if (!channel || typeof channel.send !== 'function') return false;
+
+    // Đánh dấu TRƯỚC khi gửi để 2 nhịp đồng thời không thể gửi trùng
+    done.add(step);
+    this._countdownChat.set(key, done);
+
+    const gameMeta = this._countdownGameMeta(round.game_id);
+    const lines = {
+      3: {
+        emoji: '🔴',
+        headline: '**3** — CHUẨN BỊ KHÓA SỔ ĐẶT CƯỢC!',
+        hint: 'Ai còn muốn vào cửa thì bấm ngay!',
+      },
+      2: {
+        emoji: '🟠',
+        headline: '**2** — SẮP HẾT THỜI GIAN!',
+        hint: 'Nút đặt cược sẽ khóa ở giây tiếp theo.',
+      },
+      1: {
+        emoji: '🟢',
+        headline: '**1** — KHÓA CỬA NGAY BÂY GIỜ!',
+        hint: 'Chuẩn bị mở bát công bố kết quả...',
+      },
+    };
+    const step_ = lines[step];
+
+    try {
+      const msg = await channel.send({
+        content:
+          `${step_.emoji} ${step_.headline}\n` +
+          `-# ${gameMeta.emoji} Phiên \`#${key}\` • ${step_.hint}`,
+        allowedMentions: { parse: [] },
+      });
+
+      // Tự xóa sau 7 giây để kênh không bị rác sau khi phiên đã mở bát
+      const ttl = setTimeout(() => {
+        msg?.delete?.().catch(() => {});
+      }, 7_000);
+      ttl.unref?.();
+
+      return true;
+    } catch (err) {
+      logger.warn(
+        'MultiplayerRoundSystem',
+        `Không gửi được tin nhắn đếm ngược ${step}s của phiên #${key}`,
+        err
+      );
+      // Cho phép thử lại ở nhịp sau nếu gửi lỗi mạng
+      done.delete(step);
+      return false;
+    }
+  }
+
+  /**
+   * 🗣️ CHAT "HẾT THỜI GIAN — MỞ BÁT!" ngay khi phiên bắt đầu chốt kết quả.
+   * Mỗi phiên chỉ gửi đúng 1 lần, tự xóa sau 10 giây.
+   *
+   * @param {string} roundId
+   * @returns {Promise<boolean>}
+   */
+  async chatTimeUp(roundId) {
+    const key = String(roundId);
+    if (this._timeUpChat.has(key)) return false;
+
+    const round = this.db.get(
+      'SELECT round_id, channel_id, game_id FROM multiplayer_rounds WHERE round_id = ?',
+      [key]
+    );
+    if (!round) return false;
+
+    this._timeUpChat.set(key, this._now());
+
+    const channel = await this._resolveRoundChannel(round.channel_id);
+    if (!channel || typeof channel.send !== 'function') return false;
+
+    const gameMeta = this._countdownGameMeta(round.game_id);
+    try {
+      const msg = await channel.send({
+        content:
+          `⏰ **HẾT THỜI GIAN!** — Đã khóa sổ phiên \`#${key}\`\n` +
+          `-# ${gameMeta.emoji} ${gameMeta.title} • Đang mở bát công bố kết quả...`,
+        allowedMentions: { parse: [] },
+      });
+      const ttl = setTimeout(() => {
+        msg?.delete?.().catch(() => {});
+      }, 10_000);
+      ttl.unref?.();
+      return true;
+    } catch (err) {
+      logger.warn('MultiplayerRoundSystem', `Không gửi được tin nhắn hết thời gian phiên #${key}`, err);
+      return false;
+    }
+  }
+
   _scheduleRoundTimers(roundId) {
     const key = String(roundId);
     this._clearRoundTimers(key);
@@ -2844,6 +3015,8 @@ export class MultiplayerRoundSystem {
             milestone: `${sec}s`,
             forcedCountdownSec: sec,
           }).catch(() => {});
+          // 🗣️ Chat đếm ngược lên kênh: "3" -> "2" -> "1" (mỗi mốc đúng 1 tin nhắn)
+          this.chatCountdown(key, sec).catch(() => {});
         }, delay);
         if (typeof t.unref === 'function') t.unref();
         timers.add(t);
@@ -3313,5 +3486,7 @@ export class MultiplayerRoundSystem {
     }
     this._renderDebounce.clear();
     this._messageRefs.clear();
+    this._countdownChat.clear();
+    this._timeUpChat.clear();
   }
 }
