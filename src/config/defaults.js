@@ -83,6 +83,7 @@ export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
     race: false, // OWNER/ADMIN có thể bật thêm cho Đua Thú
   },
   mpAutoNextOnCancelled: false, // Mặc định không tự mở lại khi phiên bị CANCELLED (trừ khi ADMIN bật)
+  mpAutoStopEmptyRoundsThreshold: 2, // Tự động ngừng mở phiên mới sau 2 phiên liên tiếp 0 người đặt cược
   mpAutoNextGuildOverrides: {}, // Ghi đè cấu hình Auto Next riêng theo từng Guild (nếu có)
 
   // Kênh log chuyên biệt

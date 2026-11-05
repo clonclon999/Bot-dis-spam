@@ -112,6 +112,20 @@ export class GameDatabase {
            ON multiplayer_rounds (guild_id, game_id, table_index)
            WHERE status IN ('WAITING', 'BETTING', 'LOCKED', 'DRAWING', 'SETTLING')`
         );
+        this.db.run(
+          `CREATE TABLE IF NOT EXISTS multiplayer_idle_states (
+             guild_id TEXT NOT NULL,
+             game_id TEXT NOT NULL CHECK(game_id IN ('baucua', 'taixiu', 'race')),
+             empty_streak INTEGER NOT NULL DEFAULT 0 CHECK(empty_streak >= 0),
+             auto_paused INTEGER NOT NULL DEFAULT 0 CHECK(auto_paused IN (0, 1)),
+             prev_auto_next_enabled INTEGER NOT NULL DEFAULT 1 CHECK(prev_auto_next_enabled IN (0, 1)),
+             last_round_id TEXT DEFAULT NULL,
+             last_counted_round_id TEXT DEFAULT NULL,
+             paused_at INTEGER DEFAULT NULL,
+             updated_at INTEGER NOT NULL,
+             PRIMARY KEY (guild_id, game_id)
+           )`
+        );
       }
     } catch {
       // Bỏ qua nếu cột đã tồn tại

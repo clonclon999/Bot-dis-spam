@@ -351,4 +351,18 @@ CREATE INDEX IF NOT EXISTS idx_mp_bets_round_user
   ON multiplayer_bets (round_id, user_id, status);
 CREATE INDEX IF NOT EXISTS idx_mp_bets_user_time
   ON multiplayer_bets (user_id, created_at DESC);
+
+-- 19. Trạng Thái Tự Động Tạm Ngừng Khi Vắng Người Chơi (Auto Stop When No Players — Độc lập theo Server & Trò chơi)
+CREATE TABLE IF NOT EXISTS multiplayer_idle_states (
+  guild_id TEXT NOT NULL,
+  game_id TEXT NOT NULL CHECK(game_id IN ('baucua', 'taixiu', 'race')),
+  empty_streak INTEGER NOT NULL DEFAULT 0 CHECK(empty_streak >= 0),
+  auto_paused INTEGER NOT NULL DEFAULT 0 CHECK(auto_paused IN (0, 1)),
+  prev_auto_next_enabled INTEGER NOT NULL DEFAULT 1 CHECK(prev_auto_next_enabled IN (0, 1)),
+  last_round_id TEXT DEFAULT NULL,
+  last_counted_round_id TEXT DEFAULT NULL,
+  paused_at INTEGER DEFAULT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (guild_id, game_id)
+);
 `;
