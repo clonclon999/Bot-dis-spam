@@ -209,7 +209,7 @@ describe('Chat Đếm Ngược 3 – 2 – 1 Lên Kênh Khi Sắp Hết Giờ Đ
     }
   });
 
-  it('5. Khóa chốt phiên bị kẹt quá 20 giây sẽ tự giải phóng để chốt lại (self-heal)', async () => {
+  it('5. Khóa chốt phiên bị kẹt quá 120 giây sẽ tự giải phóng để chốt lại (self-heal)', async () => {
     const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'countdown-heal-'));
     try {
       const systems = await createBotSystems(tmpDir);
@@ -225,7 +225,7 @@ describe('Chat Đếm Ngược 3 – 2 – 1 Lên Kênh Khi Sắp Hết Giờ Đ
 
         // Giả lập một lần chốt trước đó bị treo từ 30 giây trước
         mp._finalizingRounds.add(String(roundId));
-        mp._finalizingSince.set(String(roundId), Date.now() - 30_000);
+        mp._finalizingSince.set(String(roundId), Date.now() - 130_000);
 
         await mp.finalizeRound(roundId, { skipAnimation: true });
 

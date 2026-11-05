@@ -88,6 +88,12 @@ export class MultiplayerRoundSystem {
     /** @type {Map<string, number>} roundId -> thời điểm bắt đầu chốt phiên (phát hiện treo) */
     this._finalizingSince = new Map();
 
+    /** @type {Set<string>} roundId đang trong 1 lần cập nhật bảng */
+    this._renderInFlight = new Set();
+
+    /** @type {Map<string, number>} roundId -> lần cập nhật bảng gần nhất (giãn cách API) */
+    this._lastRenderAt = new Map();
+
     /** @type {Map<string, ReturnType<typeof setTimeout>>} roundId -> coalesced render timer */
     this._renderDebounce = new Map();
 
@@ -1948,12 +1954,12 @@ export class MultiplayerRoundSystem {
       // (mạng Discord treo, rate-limit kẹt...) thì giải phóng khóa để chốt lại,
       // tuyệt đối không để kết quả bị đứng yên vĩnh viễn.
       const since = this._finalizingSince.get(key) ?? 0;
-      if (this._now() - since < 20_000) {
+      if (this._now() - since < 120_000) {
         return this.getRoundSnapshot(key);
       }
       logger.error(
         'MultiplayerRoundSystem',
-        `Phát hiện phiên #${key} bị treo ở bước chốt kết quả quá 20 giây — tự động giải phóng khóa và chốt lại.`
+        `Phát hiện phiên #${key} bị treo ở bước chốt kết quả quá 120 giây — tự động giải phóng khóa và chốt lại.`
       );
       this._finalizingRounds.delete(key);
       this._finalizingSince.delete(key);
@@ -3076,11 +3082,8 @@ export class MultiplayerRoundSystem {
             [key]
           );
           if (!cur || cur.status !== MP_ROUND_STATUS.BETTING) return;
-          this._renderBoardNow(key, {
-            milestone: `${sec}s`,
-            forcedCountdownSec: sec,
-          }).catch(() => {});
-          // 🗣️ Chat đếm ngược lên kênh: "3" -> "2" -> "1" (mỗi mốc đúng 1 tin nhắn)
+          // 🗣️ Chat đếm ngược lên kênh: "3" -> "2" -> "1" (mỗi mốc đúng 1 tin nhắn).
+          // KHÔNG sửa lại bảng ở mỗi giây nữa: giảm 3 lần gọi API/phiên, tránh quá tải & AbortError.
           this.chatCountdown(key, sec).catch(() => {});
         }, delay);
         if (typeof t.unref === 'function') t.unref();
@@ -3142,24 +3145,41 @@ export class MultiplayerRoundSystem {
 
   async _renderBoardNow(roundId, meta = {}) {
     if (typeof this.boardRenderer !== 'function') return;
-    const deb = this._renderDebounce.get(String(roundId));
+    const key = String(roundId);
+    const deb = this._renderDebounce.get(key);
     if (deb) {
       clearTimeout(deb);
-      this._renderDebounce.delete(String(roundId));
+      this._renderDebounce.delete(key);
+    }
+
+    // 🚦 CHỐNG DỒN HÀNG: nếu phiên này đang có 1 lần cập nhật chạy dở (mạng chậm),
+    // bỏ qua lần mới thay vì xếp hàng — tránh tạo ra hàng chục request chồng nhau
+    // làm Discord trả AbortError và bảng kết quả không bao giờ được công bố.
+    if (this._renderInFlight.has(key)) return;
+    // Chỉ giãn cách các bản cập nhật "thường xuyên" (cược mới / mốc đếm ngược).
+    // Các mốc QUAN TRỌNG (khóa sổ, quay kết quả, công bố kết quả, Auto Next) luôn được vẽ ngay.
+    const throttleable = meta.phase === 'BET_UPDATE' || Boolean(meta.milestone);
+    if (throttleable && meta.force !== true) {
+      const lastAt = this._lastRenderAt.get(key) ?? 0;
+      if (this._now() - lastAt < 2_500) return;
     }
 
     const snapshot = this.getRoundSnapshot(roundId);
     if (!snapshot) return;
 
-    const msg = await this._resolveBoardMessage(snapshot.round);
+    this._renderInFlight.add(key);
+    this._lastRenderAt.set(key, this._now());
     try {
+      const msg = await this._resolveBoardMessage(snapshot.round);
       await this.boardRenderer(snapshot, { ...meta, message: msg });
     } catch (err) {
-      logger.warn(
-        'MultiplayerRoundSystem',
-        `Không thể cập nhật bảng hiển thị phiên #${roundId}`,
-        err
-      );
+      // AbortError / timeout mạng: chỉ ghi 1 dòng gọn (không xả stack trace rác console)
+      const msgText = err?.name === 'AbortError' || /aborted/i.test(String(err?.message))
+        ? 'Discord API phản hồi quá chậm (timeout) — bỏ qua lần cập nhật này'
+        : err?.message || String(err);
+      logger.warn('MultiplayerRoundSystem', `Không cập nhật được bảng phiên #${roundId}: ${msgText}`);
+    } finally {
+      this._renderInFlight.delete(key);
     }
   }
 
@@ -3484,7 +3504,7 @@ export class MultiplayerRoundSystem {
         const key = String(row.round_id);
         // Bỏ qua phiên đang trong tiến trình chốt bình thường (dưới 20 giây)
         const since = this._finalizingSince.get(key);
-        if (since && this._now() - since < 20_000) continue;
+        if (since && this._now() - since < 120_000) continue;
         handled += 1;
         await this.finalizeRound(key, { skipAnimation: true, isRecoverySettlement: true }).catch(
           (err) => {
@@ -3603,6 +3623,8 @@ export class MultiplayerRoundSystem {
     this._countdownChat.clear();
     this._timeUpChat.clear();
     this._finalizingSince.clear();
+    this._renderInFlight.clear();
+    this._lastRenderAt.clear();
     if (this._safetySweepTimer) {
       clearInterval(this._safetySweepTimer);
       this._safetySweepTimer = null;

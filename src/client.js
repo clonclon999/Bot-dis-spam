@@ -53,6 +53,13 @@ export function createBotClient({ env, systems, ...legacyDeps }) {
         lifetime: 600,
       },
     },
+    // 🌐 @discordjs/rest: nới hạn chờ lên 30 giây (mặc định 15s). Trên VPS gói FREE,
+    // tải ảnh bảng + tin nhắn đôi khi vượt 15 giây => AbortError "This operation was aborted"
+    // và bảng kết quả không bao giờ được công bố. Số lần thử lại giữ thấp (2) để không dồn hàng.
+    rest: {
+      timeout: 30_000,
+      retries: 2,
+    },
   });
 
   activeContext?.logSystem?.attachClient?.(client);

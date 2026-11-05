@@ -103,6 +103,22 @@ export async function createBotSystems(dataDir) {
     multiplayerRoundSystem,
   };
 
+  /**
+   * Gửi bảng phiên mới với phương án dự phòng: nếu tải ảnh lên thất bại (AbortError/timeout),
+   * tự gửi lại bảng dạng CHỈ CHỮ để kênh không bị trống phiên.
+   */
+  const sendBoardWithFallback = async (targetChannel, payload, snapshot) => {
+    try {
+      return await targetChannel.send(payload);
+    } catch (err) {
+      const textOnly = buildMultiplayerBoardPayload(snapshot, systems, {
+        isEdit: true,
+        textOnly: true,
+      });
+      return targetChannel.send(textOnly).catch(() => null);
+    }
+  };
+
   multiplayerRoundSystem.setBoardRenderer(async (snapshot, meta = {}) => {
     const msg = meta.message;
     if (!msg || typeof msg.edit !== 'function') return;
@@ -110,7 +126,18 @@ export async function createBotSystems(dataDir) {
       ...meta,
       isEdit: true,
     });
-    await msg.edit(payload);
+    try {
+      await msg.edit(payload);
+    } catch (err) {
+      // 🛟 PHƯƠNG ÁN DỰ PHÒNG: nếu tải ảnh lên Discord thất bại (AbortError/timeout trên VPS yếu),
+      // đăng lại bảng dạng CHỈ CHỮ để kết quả phiên LUÔN được công bố, không bao giờ bỏ trắng.
+      const retryPayload = buildMultiplayerBoardPayload(snapshot, systems, {
+        ...meta,
+        isEdit: true,
+        textOnly: true,
+      });
+      await msg.edit(retryPayload).catch(() => {});
+    }
   });
 
   multiplayerRoundSystem.setAutoStartBoardPublisher(async (newSnapshot, prevRound, prevMsg) => {
@@ -138,7 +165,7 @@ export async function createBotSystems(dataDir) {
       const freshPayload = buildMultiplayerBoardPayload(newSnapshot, systems, {
         isEdit: false,
       });
-      const sentMsg = await targetChannel.send(freshPayload);
+      const sentMsg = await sendBoardWithFallback(targetChannel, freshPayload, newSnapshot);
       if (sentMsg) {
         multiplayerRoundSystem.registerMessageRef(newSnapshot.round.round_id, sentMsg);
       }
@@ -170,7 +197,7 @@ export async function createBotSystems(dataDir) {
       const freshPayload = buildMultiplayerBoardPayload(newSnapshot, systems, {
         isEdit: false,
       });
-      const sentMsg = await targetChannel.send(freshPayload);
+      const sentMsg = await sendBoardWithFallback(targetChannel, freshPayload, newSnapshot);
       if (sentMsg) {
         multiplayerRoundSystem.registerMessageRef(newSnapshot.round.round_id, sentMsg);
       }

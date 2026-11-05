@@ -326,15 +326,21 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
       accent = THEME.NEON_GOLD;
     }
 
+    // 🪶 SIÊU NHẸ: khi CHỈ CẬP NHẬT bảng (đếm ngược, cược mới, mốc 30/10/5s...) thì KHÔNG đính kèm lại
+    // ảnh/gif. Trước đây mỗi lần cập nhật đều tải lại ~130–600 KB ảnh lên Discord => API quá tải,
+    // phản hồi >15 giây và bị AbortError, khiến bảng kết quả không bao giờ được công bố.
+    // Ảnh chỉ được tải lên 1 lần khi ĐĂNG BẢNG MỚI (isEdit: false).
+    const slimUpdate = Boolean(meta.isEdit);
+
     const bannerAtt = buildAssetAttachment(gameMeta.bannerPath, `mp_banner_${round.game_id}.png`);
-    const doorsGallery = isBauCua
+    const doorsGallery = slimUpdate || isBauCua
       ? { files: [], items: [] }
       : round.game_id === GAME_IDS.TAIXIU
         ? buildMultiplayerTaiXiuDoorsGallery(doorStats)
         : buildMultiplayerRaceDoorsGallery(doorStats);
 
     const boardChildren = [
-      mediaGallery([{ url: bannerAtt.url, description: gameMeta.title }]),
+      ...(slimUpdate ? [] : [mediaGallery([{ url: bannerAtt.url, description: gameMeta.title }])]),
       textDisplay(
         [
           `## ${gameMeta.emoji} PHIÊN ${gameMeta.title} — \`#${round.round_id}\``,
@@ -393,9 +399,9 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
 
     return buildCv2Payload({
       containers: [boardContainer, controlContainer],
-      files: [bannerAtt.attachment, ...doorsGallery.files],
+      files: slimUpdate ? [] : [bannerAtt.attachment, ...doorsGallery.files],
       ephemeral,
-      clearAttachments,
+      clearAttachments: slimUpdate ? false : clearAttachments,
       allowedMentions: { parse: [] },
     });
   }
@@ -596,7 +602,10 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
         ? losersLines.join('\n')
         : '_Không có người chơi thua ở phiên này!_';
 
-  const showTopBanner = round.game_id !== GAME_IDS.BAUCUA;
+  // Nếu lần công bố đầu bị lỗi mạng khi tải ảnh, renderer sẽ gọi lại với `textOnly`
+  // để kết quả bằng chữ LUÔN được đăng thay vì bỏ trắng cả phiên.
+  const textOnly = Boolean(meta.textOnly);
+  const showTopBanner = round.game_id !== GAME_IDS.BAUCUA && !textOnly;
   const resChildren = [];
   if (showTopBanner) {
     resChildren.push(
@@ -613,7 +622,7 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
     )
   );
 
-  if (rollGallery.items.length > 0) {
+  if (!textOnly && rollGallery.items.length > 0) {
     resChildren.push(mediaGallery(rollGallery.items));
   }
 
@@ -678,9 +687,9 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
 
   return buildCv2Payload({
     containers: [resContainer],
-    files: [...(showTopBanner ? [topBannerAtt.attachment] : []), ...rollGallery.files],
+    files: textOnly ? [] : [...(showTopBanner ? [topBannerAtt.attachment] : []), ...rollGallery.files],
     ephemeral,
-    clearAttachments,
+    clearAttachments: textOnly ? false : clearAttachments,
     allowedMentions: { parse: [] },
   });
 }
@@ -984,6 +993,19 @@ export async function handlePublicStartRoundInteraction(
     systems.multiplayerRoundSystem.getRoundSnapshot(activeRoundId) || startRes.snapshot;
   const boardPayload = buildMultiplayerBoardPayload(latestSnapshot, systems, { isEdit: false });
 
+  // Gửi bảng phiên kèm phương án dự phòng chỉ-chữ (nếu tải ảnh lên Discord thất bại)
+  const sendBoardSafe = async (channel) => {
+    try {
+      return await channel.send(boardPayload);
+    } catch {
+      const textOnly = buildMultiplayerBoardPayload(latestSnapshot, systems, {
+        isEdit: true,
+        textOnly: true,
+      });
+      return channel.send(textOnly).catch(() => null);
+    }
+  };
+
   // Trường hợp người chơi mở phiên ngay tại kênh trò chơi (VD: gõ /baucua ngay trong #bau_cua)
   if (targetChannelId === interaction.channelId) {
     // `respondPrimary` tự chọn reply/editReply => hoạt động đúng kể cả khi Interaction đã được ack sớm (deferReply).
@@ -1022,7 +1044,7 @@ export async function handlePublicStartRoundInteraction(
   }
 
   if (targetChannel && typeof targetChannel.send === 'function') {
-    const sentMsg = await targetChannel.send(boardPayload);
+    const sentMsg = await sendBoardSafe(targetChannel);
     systems.multiplayerRoundSystem.registerMessageRef(startRes.round.round_id, sentMsg);
     await systems.multiplayerRoundSystem.cleanupPreviousRoundBoards?.(
       guildId,
