@@ -1,8 +1,9 @@
 import {
-  buildInvalidWordEmbed,
+  buildInvalidWordPayload,
   buildValidTurnPayload,
   buildVictoryPayload,
   cleanupRoomFeedbackMessage,
+  editNoituBoardMessage,
 } from '../commands/games/noitu.js';
 import { GAME_IDS } from '../config/constants.js';
 import { evaluateExemption } from '../services/whitelistService.js';
@@ -141,9 +142,7 @@ async function renderNoituProTurn(message, turnResult, wordChainSystem) {
     const victoryPayload = buildVictoryPayload(turnResult.outcome);
 
     if (room?.boardMessage && typeof room.boardMessage.edit === 'function') {
-      const edited = await room.boardMessage
-        .edit({ content: null, ...victoryPayload })
-        .catch(() => null);
+      const edited = await editNoituBoardMessage(room.boardMessage, victoryPayload);
       if (edited) return;
     }
 
@@ -153,9 +152,10 @@ async function renderNoituProTurn(message, turnResult, wordChainSystem) {
     return;
   }
 
-  // Trường hợp trả lời sai / từ đã dùng / sai lượt -> Gửi hoặc chỉnh sửa tại chỗ Embed cảnh báo
+  // Trường hợp trả lời sai / từ đã dùng / sai lượt -> Gửi hoặc chỉnh sửa tại chỗ khung cảnh báo Components V2
   if (!turnResult.ok) {
-    const errEmbed = buildInvalidWordEmbed({
+    const errPayload = buildInvalidWordPayload({
+      authorId: message.author.id,
       code: turnResult.code,
       word: turnResult.word,
       requiredPrefix: turnResult.requiredPrefix,
@@ -163,19 +163,13 @@ async function renderNoituProTurn(message, turnResult, wordChainSystem) {
       currentTurnUserId: turnResult.currentTurnUserId ?? room?.currentTurnUserId,
     });
 
-    const payload = {
-      content: `<@${message.author.id}>`,
-      embeds: [errEmbed],
-      allowedMentions: { users: [message.author.id] },
-    };
-
     if (room?.feedbackMessage && typeof room.feedbackMessage.edit === 'function') {
-      const edited = await room.feedbackMessage.edit(payload).catch(() => null);
+      const edited = await editNoituBoardMessage(room.feedbackMessage, errPayload);
       if (edited) return;
     }
 
     if (typeof channel?.send === 'function') {
-      const sent = await channel.send(payload).catch(() => null);
+      const sent = await channel.send(errPayload).catch(() => null);
       if (room && sent) {
         room.feedbackMessage = sent;
       }
@@ -183,7 +177,7 @@ async function renderNoituProTurn(message, turnResult, wordChainSystem) {
     return;
   }
 
-  // Trường hợp nối từ HỢP LỆ và chuyển sang lượt tiếp theo -> Chỉnh sửa Embed hiện tại của bàn đấu!
+  // Trường hợp nối từ HỢP LỆ và chuyển sang lượt tiếp theo -> Chỉnh sửa Container V2 hiện tại của bàn đấu!
   await cleanupRoomFeedbackMessage(room);
 
   const validPayload = buildValidTurnPayload({
@@ -196,9 +190,7 @@ async function renderNoituProTurn(message, turnResult, wordChainSystem) {
   });
 
   if (room?.boardMessage && typeof room.boardMessage.edit === 'function') {
-    const edited = await room.boardMessage
-      .edit({ content: null, ...validPayload })
-      .catch(() => null);
+    const edited = await editNoituBoardMessage(room.boardMessage, validPayload);
     if (edited) return;
   }
 

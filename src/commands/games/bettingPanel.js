@@ -7,16 +7,23 @@ import {
   TextInputStyle,
 } from 'discord.js';
 import { QUICK_BET_AMOUNTS } from '../../config/constants.js';
+import { buildGameResultNavRow } from '../../ui/navigation.js';
 import { formatNumber, formatVnd } from '../../utils/format.js';
 
-const PANEL_TTL_MS = 10 * 60 * 1000;
+export const PANEL_TTL_MS = 10 * 60 * 1000;
 
 /**
- * Bộ nhớ phiên bảng đặt cược tương tác có giới hạn kích thước & TTL chống rò rỉ RAM trên BotKeep FREE.
+ * Bộ nhớ phiên bảng đặt cược tương tác có giới hạn kích thước, số thế hệ (`gen`) & TTL chống rò rỉ RAM.
  * Khóa: `${gameId}:${userId}`
  * @type {Map<string, object>}
  */
 const bettingDrafts = new Map();
+
+/**
+ * Bộ nhớ cửa Bầu Cua ván gần nhất để hỗ trợ nút "Đặt lại cửa trước" mà không tự ý trừ tiền.
+ * @type {Map<string, Record<string, number>>}
+ */
+const lastBauCuaStakes = new Map();
 
 /**
  * Khóa xác nhận 1 chiều chống nhấn đúp / Race Condition khi người chơi bấm "Xác nhận".
@@ -39,6 +46,25 @@ export function getBettingDraft(gameId, userId, now = Date.now()) {
   return draft;
 }
 
+/**
+ * Kiểm tra trạng thái phiên cược bao gồm cả cờ `expired` khi người chơi bấm nút trên bảng đã quá hạn.
+ */
+export function inspectBettingDraft(gameId, userId, expectedGen = null, now = Date.now()) {
+  const key = makeKey(gameId, userId);
+  const raw = bettingDrafts.get(key);
+  if (!raw) {
+    return { draft: null, expired: false, staleGen: false };
+  }
+  if (raw.expiresAt <= now) {
+    bettingDrafts.delete(key);
+    return { draft: null, expired: true, staleGen: false };
+  }
+  if (expectedGen !== null && expectedGen !== undefined && Number(expectedGen) !== raw.gen) {
+    return { draft: raw, expired: false, staleGen: true };
+  }
+  return { draft: raw, expired: false, staleGen: false };
+}
+
 export function upsertBettingDraft(gameId, userId, initOrPatch = {}, now = Date.now()) {
   if (bettingDrafts.size > 600) {
     for (const [k, v] of bettingDrafts.entries()) {
@@ -46,7 +72,9 @@ export function upsertBettingDraft(gameId, userId, initOrPatch = {}, now = Date.
     }
   }
   const key = makeKey(gameId, userId);
-  const prev = getBettingDraft(gameId, userId, now) || {
+  const existing = getBettingDraft(gameId, userId, now);
+  const bumpGen = Boolean(initOrPatch.resetSession);
+  const base = existing || {
     gameId,
     userId: String(userId),
     betAmount: 1_000,
@@ -54,19 +82,35 @@ export function upsertBettingDraft(gameId, userId, initOrPatch = {}, now = Date.
     activeChip: 1_000,
     mascotBets: {},
     confirmed: false,
+    gen: 1,
   };
+
   const next = {
-    ...prev,
+    ...base,
     ...initOrPatch,
+    gen: bumpGen ? (base.gen + 1) % 100_000 : base.gen,
     confirmed: initOrPatch.confirmed ?? false,
     expiresAt: now + PANEL_TTL_MS,
   };
+  delete next.resetSession;
   bettingDrafts.set(key, next);
   return next;
 }
 
 export function clearBettingDraft(gameId, userId) {
   bettingDrafts.delete(makeKey(gameId, userId));
+}
+
+export function saveLastBauCuaStakes(userId, stakes) {
+  if (lastBauCuaStakes.size > 500) {
+    const oldest = lastBauCuaStakes.keys().next().value;
+    lastBauCuaStakes.delete(oldest);
+  }
+  lastBauCuaStakes.set(String(userId), { ...stakes });
+}
+
+export function getLastBauCuaStakes(userId) {
+  return lastBauCuaStakes.get(String(userId)) || null;
 }
 
 /**
@@ -95,28 +139,30 @@ export function computeAllInAmount(wallet, minBet, maxBet) {
 }
 
 /**
- * Dựng khối văn bản thông tin đặt cược chuẩn Mục 5 (hiển thị trên mọi bảng cược tương tác).
+ * Dựng khối văn bản thông tin đặt cược chuẩn Components V2 (gọn, rõ, chuẩn Mobile & Desktop).
  */
 export function formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel }) {
   const validRange = betAmount >= minBet && betAmount <= maxBet;
   const enoughBalance = wallet >= betAmount;
   const afterBet = wallet - betAmount;
+  const warnBadge = !validRange
+    ? ' ⚠️ *(Ngoài giới hạn)*'
+    : !enoughBalance
+      ? ' ⚠️ *(Vượt số dư ví)*'
+      : '';
 
   return [
-    `💰 **Số dư ví hiện tại:** \`${formatVnd(wallet)}\``,
-    `📏 **Giới hạn cược:** Tối thiểu \`${formatVnd(minBet)}\` • Tối đa \`${formatVnd(maxBet)}\``,
-    `🎯 **Lựa chọn cửa:** ${choiceLabel || '*(Chưa chọn — hãy bấm chọn cửa bên dưới)*'}`,
-    `💵 **Số tiền muốn cược:** **${formatVnd(betAmount)}** ${!validRange ? '⚠️ *(Ngoài giới hạn)*' : !enoughBalance ? '⚠️ *(Vượt số dư)*' : ''}`,
-    `🏦 **Số dư dự kiến sau cược:** \`${enoughBalance ? formatVnd(afterBet) : 'Không đủ số dư'}\``,
-    `*Lưu ý: Hệ thống chỉ trừ VNĐ sau khi bạn bấm **Xác nhận** thành công.*`,
+    `🎯 **Cửa đang chọn:** ${choiceLabel || '*(Chưa chọn cửa)*'}`,
+    `💰 **Ví hiện có:** \`${formatVnd(wallet)}\` • 📏 **Giới hạn:** \`${formatNumber(minBet)} – ${formatNumber(maxBet)} VNĐ\``,
+    `💵 **Tiền đặt cược:** **${formatVnd(betAmount)}**${warnBadge} ➔ 🏦 **Sau cược:** \`${enoughBalance ? formatVnd(afterBet) : 'Không đủ số dư'}\``,
+    `-# 🔒 An toàn 100%: Chỉ trừ VNĐ sau khi bạn nhấn Xác nhận.`,
   ].join('\n');
 }
 
 /**
- * Dựng 3 hàng nút điều khiển đặt cược chuẩn Mục 5:
- * - Hàng Chip nhanh: 100 VNĐ | 500 VNĐ | 1.000 VNĐ | 5.000 VNĐ | 10.000 VNĐ
- * - Hàng Tất cả + Nhập tùy chỉnh (Modal)
- * - Hàng Hành động: Xác nhận | Hủy | Quay lại
+ * Dựng 2 hàng nút đặt cược gọn gàng chuẩn Mobile & Desktop:
+ * - Hàng 1: 100 ₫ • 500 ₫ • 1.000 ₫ • 5.000 ₫ • 10.000 ₫
+ * - Hàng 2: Tất cả • Nhập tiền (Modal) • Xác nhận • Hủy • Quay lại
  */
 export function buildStandardBettingRows({
   prefix,
@@ -129,39 +175,41 @@ export function buildStandardBettingRows({
     ...QUICK_BET_AMOUNTS.map((amt) =>
       new ButtonBuilder()
         .setCustomId(`${prefix}:chip:${userId}:${amt}`)
-        .setLabel(`${formatNumber(amt)} VNĐ`)
+        .setLabel(`${formatNumber(amt)} ₫`)
         .setStyle(selectedBet === amt ? ButtonStyle.Primary : ButtonStyle.Secondary)
     )
   );
 
-  const flexRow = new ActionRowBuilder().addComponents(
+  const actionRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`${prefix}:chip:${userId}:all`)
-      .setLabel('🔥 Tất cả')
+      .setLabel('Tất cả')
+      .setEmoji('🔥')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId(`${prefix}:modal:${userId}`)
-      .setLabel('✏️ Nhập mức cược khác')
-      .setStyle(ButtonStyle.Secondary)
-  );
-
-  const actionRow = new ActionRowBuilder().addComponents(
+      .setLabel('Nhập tiền')
+      .setEmoji('✏️')
+      .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`${prefix}:confirm:${userId}`)
-      .setLabel(`✅ ${confirmLabel}`)
+      .setLabel(confirmLabel.slice(0, 28))
+      .setEmoji('✅')
       .setStyle(ButtonStyle.Success)
       .setDisabled(!canConfirm),
     new ButtonBuilder()
       .setCustomId(`${prefix}:cancel:${userId}`)
-      .setLabel('❌ Hủy')
+      .setLabel('Hủy')
+      .setEmoji('❌')
       .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId(`${prefix}:back:${userId}`)
-      .setLabel('⬅️ Quay lại')
+      .setLabel('Quay lại')
+      .setEmoji('⬅️')
       .setStyle(ButtonStyle.Secondary)
   );
 
-  return [chipRow, flexRow, actionRow];
+  return [chipRow, actionRow];
 }
 
 /**
@@ -186,17 +234,8 @@ export function buildCustomBetModal({ customId, gameTitle, minBet, maxBet, curre
 }
 
 /**
- * Dựng hàng nút sau khi kết thúc ván chơi: Chơi lại + Quay về Game Center.
+ * Dựng hàng nút sau khi kết thúc ván chơi: Chơi lại • Ví tiền • Nhiệm vụ • Game Center • Đóng.
  */
-export function buildPostGameRow({ replayCustomId, userId }) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(replayCustomId)
-      .setLabel('🔄 Chơi lại')
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`gc:home:${userId}`)
-      .setLabel('🎮 Game Center')
-      .setStyle(ButtonStyle.Secondary)
-  );
+export function buildPostGameRow({ replayCustomId, userId, extraButton = null }) {
+  return buildGameResultNavRow({ replayCustomId, userId, extraButton });
 }

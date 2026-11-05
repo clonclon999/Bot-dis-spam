@@ -1,12 +1,14 @@
-import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from 'discord.js';
 import { EVENT_TYPE_LABELS } from '../../config/constants.js';
-import { COLORS } from '../../utils/embeds.js';
+import { buildCv2NoticePayload } from '../../ui/componentsV2.js';
+import { safeReplyV2 } from '../../ui/interactionHelpers.js';
+import { THEME } from '../../ui/theme.js';
 import { formatVnd } from '../../utils/format.js';
 
 export const eventCommand = {
   data: new SlashCommandBuilder()
     .setName('event')
-    .setDescription('Xem các Sự kiện Đua Top & Giải thưởng đang diễn ra trên máy chủ')
+    .setDescription('Xem các Sự kiện Đua Top & Giải thưởng đang diễn ra trên máy chủ (Components V2)')
     .addSubcommand((s) =>
       s.setName('list').setDescription('Xem danh sách các sự kiện đang mở')
     )
@@ -36,15 +38,14 @@ export const eventCommand = {
             })
           : ['*Hiện chưa có sự kiện nào đang mở. Hãy đón chờ thông báo từ Admin nhé!*'];
 
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0xf1c40f)
-            .setTitle('🎊 Sự Kiện Server Đang Diễn Ra')
-            .setDescription(lines.join('\n\n'))
-            .setTimestamp(),
-        ],
-      });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '🎊 Sự Kiện Server Đang Diễn Ra',
+          body: lines.join('\n\n'),
+          accentColor: THEME.NEON_GOLD,
+        })
+      );
       return;
     }
 
@@ -62,18 +63,16 @@ export const eventCommand = {
           )
         : ['*Chưa có người chơi nào ghi điểm ở sự kiện này.*'];
 
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLORS.PRIMARY)
-          .setTitle(`🏆 Bảng Xếp Hạng Sự Kiện #${ev.id}: ${ev.name}`)
-          .setDescription(
-            `Trạng thái: **${ev.status === 'active' ? '🟢 Đang diễn ra' : '🏁 Đã kết thúc'}** | Giải Top 1: **${formatVnd(ev.reward_vnd)}**\n\n` +
-              lines.join('\n')
-          )
-          .setTimestamp(),
-      ],
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: `🏆 Bảng Xếp Hạng Sự Kiện #${ev.id}: ${ev.name}`,
+        body:
+          `Trạng thái: **${ev.status === 'active' ? '🟢 Đang diễn ra' : '🏁 Đã kết thúc'}** | Giải Top 1: **${formatVnd(ev.reward_vnd)}**\n\n` +
+          lines.join('\n'),
+        accentColor: THEME.NEON_CYAN,
+      })
+    );
   },
 };
 

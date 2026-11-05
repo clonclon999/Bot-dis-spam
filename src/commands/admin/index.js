@@ -19,6 +19,15 @@ import {
   HARDCODED_OWNER_ID,
   LOG_CATEGORIES,
 } from '../../config/constants.js';
+import {
+  buildCv2NoticePayload,
+  buildCv2Payload,
+  createContainer,
+  separator,
+  textDisplay,
+} from '../../ui/componentsV2.js';
+import { safeReplyV2, safeUpdateV2 } from '../../ui/interactionHelpers.js';
+import { THEME } from '../../ui/theme.js';
 import { COLORS, formatDurationVi } from '../../utils/embeds.js';
 import { formatVnd } from '../../utils/format.js';
 import {
@@ -62,42 +71,6 @@ export function buildAdminDashboardPayload(actorId, role, { db, economySystem })
   const gameBadges = Object.entries(GAME_LABELS)
     .map(([id, label]) => `${gamesEnabled[id] !== false ? '🟢' : '🔴'} ${label}`)
     .join('  •  ');
-
-  const embed = new EmbedBuilder()
-    .setColor(maint ? COLORS.WARNING : 0x5865f2)
-    .setTitle(`🛡️ BẢNG ĐIỀU KHIỂN ADMIN PRO [${role}]`)
-    .setDescription(
-      `• Bảo trì hệ thống: **${maint ? '🟠 ĐANG BẬT' : '🟢 Đang tắt'}**\n` +
-        `• Khóa giao dịch toàn cục: **${frozen ? '❄️ ĐANG ĐÓNG BĂNG' : '🟢 Hoạt động bình thường'}**\n` +
-        `• RAM tiến trình: **${memMb} MB / 512 MB** | Uptime: **${formatDurationVi(Math.floor(process.uptime()))}**`
-    )
-    .addFields(
-      {
-        name: '💰 Tổng Quan Kinh Tế VNĐ',
-        value: [
-          `• Người chơi: **${macro.totalUsers}**`,
-          `• Tổng cung VNĐ: **${formatVnd(macro.totalSupply)}**`,
-          `• Chỉ số lạm phát: **x${macro.inflationRatio}**`,
-        ].join('\n'),
-        inline: true,
-      },
-      {
-        name: '⚙️ Thông Số Hiện Hành',
-        value: [
-          `• Daily: **${formatVnd(db.getSetting('dailyReward'))}**`,
-          `• Lãi NH: **${(Number(db.getSetting('bankInterestRate')) * 100).toFixed(2)}%**`,
-          `• Cược: **${formatVnd(db.getSetting('minBet'))}** → **${formatVnd(db.getSetting('maxBet'))}**`,
-        ].join('\n'),
-        inline: true,
-      },
-      {
-        name: '🎮 Trạng Thái Các Trò Chơi',
-        value: gameBadges,
-        inline: false,
-      }
-    )
-    .setFooter({ text: 'Sử dụng Nút bấm & Select Menu bên dưới để điều hành nhanh' })
-    .setTimestamp();
 
   const gameSelectRow = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
@@ -155,7 +128,29 @@ export function buildAdminDashboardPayload(actorId, role, { db, economySystem })
     );
   }
 
-  return { embeds: [embed], components: rows, flags: MessageFlags.Ephemeral };
+  const card = createContainer({
+    accentColor: maint ? THEME.AMBER_PULSE : THEME.NEON_PURPLE,
+    children: [
+      textDisplay(
+        `## 🛡️ BẢNG ĐIỀU KHIỂN ADMIN PRO [${role}] — COMPONENTS V2\n` +
+          `• Bảo trì hệ thống: **${maint ? '🟠 ĐANG BẬT' : '🟢 Đang tắt'}**\n` +
+          `• Khóa giao dịch toàn cục: **${frozen ? '❄️ ĐANG ĐÓNG BĂNG' : '🟢 Hoạt động bình thường'}**\n` +
+          `• RAM tiến trình: **${memMb} MB / 512 MB** │ Uptime: **${formatDurationVi(Math.floor(process.uptime()))}**`
+      ),
+      separator(),
+      textDisplay(
+        `### 💰 Tổng Quan Kinh Tế & Thông Số\n` +
+          `• 👥 Người chơi: **${macro.totalUsers}** │ 💵 Tổng cung VNĐ: **${formatVnd(macro.totalSupply)}** │ 📈 Lạm phát: **x${macro.inflationRatio}**\n` +
+          `• 📅 Daily: **${formatVnd(db.getSetting('dailyReward'))}** │ 🏦 Lãi NH: **${(Number(db.getSetting('bankInterestRate')) * 100).toFixed(2)}%**\n` +
+          `• 🎯 Hạn mức cược: **${formatVnd(db.getSetting('minBet'))}** → **${formatVnd(db.getSetting('maxBet'))}**\n\n` +
+          `### 🎮 Trạng Thái 7 Trò Chơi Chính Thức\n${gameBadges}`
+      ),
+      separator(),
+      ...rows,
+    ],
+  });
+
+  return buildCv2Payload({ containers: [card], ephemeral: true, clearAttachments: true });
 }
 
 // ============================================================================
@@ -1436,17 +1431,22 @@ export async function handleAdminInteraction(interaction, ctx) {
   const [, action, ownerId] = id.split(':');
 
   if (interaction.user.id !== ownerId || !hasBotRole(db, interaction.user.id, BOT_ROLES.ADMIN)) {
-    await interaction.reply({
-      content: '⛔ Bảng điều khiển quản trị này không thuộc quyền của bạn.',
-      flags: MessageFlags.Ephemeral,
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '⛔ Không Đủ Quyền Quản Trị',
+        body: 'Bảng điều khiển quản trị này không thuộc quyền của bạn.',
+        accentColor: THEME.CRIMSON_NEON,
+        ephemeral: true,
+      })
+    );
     return true;
   }
 
   const actorRole = resolveBotRole(db, interaction.user.id);
 
   if (action === 'refresh') {
-    await interaction.update(buildAdminDashboardPayload(interaction.user.id, actorRole, ctx));
+    await safeUpdateV2(interaction, buildAdminDashboardPayload(interaction.user.id, actorRole, ctx));
     return true;
   }
 
@@ -1456,30 +1456,35 @@ export async function handleAdminInteraction(interaction, ctx) {
     current[gameId] = current[gameId] === false;
     db.setSetting('gamesEnabled', current);
     db.recordAudit({ actorId: interaction.user.id, actorRole, action: 'dashboard_toggle_game', details: `${gameId}=${current[gameId]}` });
-    await interaction.update(buildAdminDashboardPayload(interaction.user.id, actorRole, ctx));
+    await safeUpdateV2(interaction, buildAdminDashboardPayload(interaction.user.id, actorRole, ctx));
     return true;
   }
 
   if (action === 'backup') {
     const bk = await db.createBackup();
-    await interaction.reply({
-      content: `💾 Đã tạo sao lưu: \`${bk.filename}\` (${(bk.sizeBytes / 1024).toFixed(1)} KB).`,
-      flags: MessageFlags.Ephemeral,
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '💾 Sao Lưu SQLite Thành Công',
+        body: `Đã tạo bản sao lưu: \`${bk.filename}\` (\`${(bk.sizeBytes / 1024).toFixed(1)} KB\`).`,
+        accentColor: THEME.CYBER_EMERALD,
+        ephemeral: true,
+      })
+    );
     return true;
   }
 
   if (action === 'toggle_maint' && isHardcodedOwner(interaction.user.id)) {
     const next = !db.getSetting('maintenanceMode');
     db.setSetting('maintenanceMode', next);
-    await interaction.update(buildAdminDashboardPayload(interaction.user.id, actorRole, ctx));
+    await safeUpdateV2(interaction, buildAdminDashboardPayload(interaction.user.id, actorRole, ctx));
     return true;
   }
 
   if (action === 'toggle_freeze' && isHardcodedOwner(interaction.user.id)) {
     const next = !db.getSetting('freezeAllTransactions');
     db.setSetting('freezeAllTransactions', next);
-    await interaction.update(buildAdminDashboardPayload(interaction.user.id, actorRole, ctx));
+    await safeUpdateV2(interaction, buildAdminDashboardPayload(interaction.user.id, actorRole, ctx));
     return true;
   }
 
@@ -1513,10 +1518,15 @@ export async function handleAdminInteraction(interaction, ctx) {
       amount: Math.abs(rawDelta),
       reason: 'Dashboard Modal Adjust',
     });
-    await interaction.reply({
-      content: `✅ Đã cập nhật ví của <@${targetId}>: \`${formatVnd(res.before)}\` → **${formatVnd(res.after)}**.`,
-      flags: MessageFlags.Ephemeral,
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '✅ Cập Nhật Số Dư Thành Công',
+        body: `Ví của <@${targetId}>: \`${formatVnd(res.before)}\` ➔ **${formatVnd(res.after)}**.`,
+        accentColor: THEME.CYBER_EMERALD,
+        ephemeral: true,
+      })
+    );
     return true;
   }
 
@@ -1535,17 +1545,23 @@ export async function handleAdminInteraction(interaction, ctx) {
 
   if (action === 'announce_submit' && interaction.isModalSubmit()) {
     const text = interaction.fields.getTextInputValue('content');
-    await interaction.channel?.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xf1c40f)
-          .setTitle('📢 THÔNG BÁO HỆ THỐNG')
-          .setDescription(text)
-          .setTimestamp(),
-      ],
-      allowedMentions: { parse: [] },
-    });
-    await interaction.reply({ content: '✅ Đã gửi thông báo!', flags: MessageFlags.Ephemeral });
+    await interaction.channel?.send(
+      buildCv2NoticePayload({
+        title: '📢 THÔNG BÁO HỆ THỐNG',
+        body: text,
+        accentColor: THEME.NEON_GOLD,
+        allowedMentions: { parse: [] },
+      })
+    );
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '✅ Đã Gửi Thông Báo!',
+        body: 'Thông báo hệ thống đã được đăng lên kênh hiện tại.',
+        accentColor: THEME.CYBER_EMERALD,
+        ephemeral: true,
+      })
+    );
     return true;
   }
 

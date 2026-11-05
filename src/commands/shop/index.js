@@ -1,13 +1,25 @@
 import {
   ActionRowBuilder,
-  EmbedBuilder,
-  MessageFlags,
+  ButtonBuilder,
+  ButtonStyle,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { SHOP_ITEMS } from '../../config/constants.js';
+import {
+  buildCv2NoticePayload,
+  buildCv2Payload,
+  createContainer,
+  mediaGallery,
+  separator,
+  textDisplay,
+} from '../../ui/componentsV2.js';
+import {
+  safeReplyV2,
+  verifyPanelOwner,
+} from '../../ui/interactionHelpers.js';
+import { THEME } from '../../ui/theme.js';
 import { ASSET_PATHS, buildAssetAttachment } from '../../utils/assetRegistry.js';
-import { COLORS } from '../../utils/embeds.js';
 import { formatVnd } from '../../utils/format.js';
 
 const ITEM_CHOICES = Object.values(SHOP_ITEMS).map((item) => ({
@@ -19,7 +31,7 @@ const ITEM_CHOICES = Object.values(SHOP_ITEMS).map((item) => ({
 const shopCmd = {
   data: new SlashCommandBuilder()
     .setName('shop')
-    .setDescription('Mở Cửa Hàng Vật Phẩm, Thẻ Tăng Tốc, Thú Cưng, Khung Hồ Sơ & Hộp Quà Bí Ẩn'),
+    .setDescription('Mở Cửa Hàng Vật Phẩm Cyber (Components V2 – Tăng Tốc, Trứng Thú Cưng, Khung & Hộp Quà)'),
   async execute(interaction, { shopSystem, economySystem }) {
     const bal = economySystem.getBalance(interaction.user.id, interaction.user.username);
     const items = shopSystem.listCatalog();
@@ -27,27 +39,16 @@ const shopCmd = {
 
     const lines = items.map(
       (i) =>
-        `${i.emoji} **${i.name}** (\`${i.id}\`) — Giá: **${formatVnd(i.price)}**\n  ↳ *${i.description}*`
+        `${i.emoji} **${i.name}** (\`${i.id}\`) — Giá: **${formatVnd(i.price)}**\n┗ *${i.description}*`
     );
 
-    const embed = new EmbedBuilder()
-      .setColor(0xf1c40f)
-      .setTitle('🛒 Cửa Hàng Vật Phẩm Trung Tâm')
-      .setDescription(
-        `💵 Ví của bạn: **${formatVnd(bal.wallet)}** *(Mẹo: Mua thú cưng chọn loài tại \`/pet shop\`)*\n\n` +
-          lines.join('\n\n')
-      )
-      .setImage(sBanner.url)
-      .setFooter({ text: 'Chọn vật phẩm ở Menu bên dưới để mua nhanh 1 món hoặc dùng /buy' })
-      .setTimestamp();
-
-    const row = new ActionRowBuilder().addComponents(
+    const selectRow = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId(`shop:quickbuy:${interaction.user.id}`)
         .setPlaceholder('🛍️ Chọn nhanh 1 vật phẩm để mua ngay...')
         .addOptions(
           items.map((i) => ({
-            label: `${i.name} (${formatVnd(i.price)})`,
+            label: `${i.name} (${formatVnd(i.price)})`.slice(0, 95),
             value: i.id,
             emoji: i.emoji,
             description: i.description.slice(0, 95),
@@ -55,7 +56,35 @@ const shopCmd = {
         )
     );
 
-    await interaction.reply({ embeds: [embed], files: [sBanner.attachment], components: [row] });
+    const navRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`gc:nav:${interaction.user.id}:shop_bag`)
+        .setLabel('Mở Túi Đồ')
+        .setEmoji('🎒')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`gc:home:${interaction.user.id}`)
+        .setLabel('Game Center')
+        .setEmoji('🏠')
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+    const card = createContainer({
+      accentColor: THEME.NEON_PURPLE,
+      children: [
+        mediaGallery([{ url: sBanner.url, description: 'Cửa Hàng Vật Phẩm Trung Tâm' }]),
+        textDisplay(
+          `## 🛒 Cửa Hàng Vật Phẩm Trung Tâm\n` +
+            `💵 **Ví của bạn:** **${formatVnd(bal.wallet)}** *(Mua thú cưng chọn loài tại \`/pet shop\`)*\n\n` +
+            lines.join('\n\n')
+        ),
+        separator(),
+        selectRow,
+        navRow,
+      ],
+    });
+
+    await safeReplyV2(interaction, buildCv2Payload({ containers: [card], files: [sBanner.attachment] }));
   },
 };
 
@@ -80,17 +109,17 @@ const buyCmd = {
       qty
     );
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.SUCCESS)
-      .setTitle('🛍️ Mua Vật Phẩm Thành Công')
-      .setDescription(
-        `Bạn đã mua **x${res.quantity} ${res.item.emoji} ${res.item.name}** với giá **${formatVnd(res.totalCost)}**.\n` +
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '🛍️ Mua Vật Phẩm Thành Công',
+        body:
+          `Bạn đã mua **x${res.quantity} ${res.item.emoji} ${res.item.name}** với giá **${formatVnd(res.totalCost)}**.\n` +
           `💵 Ví còn lại: **${formatVnd(res.balanceAfter)}**\n` +
-          `💡 Gõ \`/use item:${res.item.name}\` để sử dụng ngay!`
-      )
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed] });
+          `💡 Gõ \`/use item:${res.item.name}\` để sử dụng ngay!`,
+        accentColor: THEME.CYBER_EMERALD,
+      })
+    );
   },
 };
 
@@ -110,17 +139,18 @@ const inventoryCmd = {
       bag.length > 0
         ? bag.map(
             ({ item, quantity }) =>
-              `${item.emoji} **${item.name}** (\`${item.id}\`) — Số lượng: **x${quantity}** *(Giá bán lại: ${formatVnd(item.sellPrice)}/món)*`
+              `${item.emoji} **${item.name}** (\`${item.id}\`) — Số lượng: **x${quantity}** *(Bán lại: ${formatVnd(item.sellPrice)}/món)*`
           )
         : ['*Túi đồ hiện đang trống. Ghé thăm `/shop` để mua sắm nhé!*'];
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.INFO)
-      .setTitle(`🎒 Túi Đồ Vật Phẩm — ${target.username}`)
-      .setDescription(lines.join('\n'))
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed] });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: `🎒 Túi Đồ Vật Phẩm — ${target.username}`,
+        body: lines.join('\n'),
+        accentColor: THEME.NEON_CYAN,
+      })
+    );
   },
 };
 
@@ -140,13 +170,14 @@ const useCmd = {
       itemId
     );
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.SUCCESS)
-      .setTitle(`${res.item.emoji} Đã Sử Dụng: ${res.item.name}`)
-      .setDescription(res.effectMessage)
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed] });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: `${res.item.emoji} Đã Sử Dụng: ${res.item.name}`,
+        body: res.effectMessage,
+        accentColor: THEME.CYBER_EMERALD,
+      })
+    );
   },
 };
 
@@ -171,16 +202,16 @@ const sellCmd = {
       qty
     );
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.PRIMARY)
-      .setTitle('💰 Bán Vật Phẩm Thành Công')
-      .setDescription(
-        `Đã bán **x${res.quantity} ${res.item.emoji} ${res.item.name}** thu về **+${formatVnd(res.totalProceeds)}**.\n` +
-          `💵 Ví hiện tại: **${formatVnd(res.balanceAfter)}**`
-      )
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed] });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '💰 Bán Vật Phẩm Thành Công',
+        body:
+          `Đã bán **x${res.quantity} ${res.item.emoji} ${res.item.name}** thu về **+${formatVnd(res.totalProceeds)}**.\n` +
+          `💵 Ví hiện tại: **${formatVnd(res.balanceAfter)}**`,
+        accentColor: THEME.NEON_CYAN,
+      })
+    );
   },
 };
 
@@ -189,15 +220,11 @@ export async function handleShopInteraction(interaction, { shopSystem }) {
   if (!id.startsWith('shop:')) return false;
 
   const [, action, ownerId] = id.split(':');
-  if (interaction.user.id !== ownerId) {
-    await interaction.reply({
-      content: '⛔ Vui lòng gõ `/shop` của riêng bạn để mua sắm nhé!',
-      flags: MessageFlags.Ephemeral,
-    });
+  if (!(await verifyPanelOwner(interaction, ownerId, '/shop'))) {
     return true;
   }
 
-  if (action === 'quickbuy' && interaction.isStringSelectMenu()) {
+  if (action === 'quickbuy' && interaction.isStringSelectMenu?.()) {
     const itemId = interaction.values[0];
     const res = shopSystem.buyItem(
       interaction.user.id,
@@ -205,18 +232,17 @@ export async function handleShopInteraction(interaction, { shopSystem }) {
       itemId,
       1
     );
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLORS.SUCCESS)
-          .setTitle('🛍️ Mua Nhanh Thành Công!')
-          .setDescription(
-            `Đã mua **1x ${res.item.emoji} ${res.item.name}** (-${formatVnd(res.totalCost)}).\n` +
-              `💵 Số dư còn lại: **${formatVnd(res.balanceAfter)}** • Gõ \`/use\` để dùng ngay!`
-          ),
-      ],
-      flags: MessageFlags.Ephemeral,
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '🛍️ Mua Nhanh Thành Công!',
+        body:
+          `Đã mua **1x ${res.item.emoji} ${res.item.name}** (-${formatVnd(res.totalCost)}).\n` +
+          `💵 Số dư còn lại: **${formatVnd(res.balanceAfter)}** • Gõ \`/use\` để dùng ngay!`,
+        accentColor: THEME.CYBER_EMERALD,
+        ephemeral: true,
+      })
+    );
     return true;
   }
 

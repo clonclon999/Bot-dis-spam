@@ -2,13 +2,27 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
-  MessageFlags,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { BOT_ROLES, TITLES } from '../../config/constants.js';
-import { COLORS } from '../../utils/embeds.js';
+import { expRequiredForLevel } from '../../systems/levelSystem.js';
+import {
+  buildCv2Payload,
+  createContainer,
+  mediaGallery,
+  sectionWithThumbnail,
+  separator,
+  textDisplay,
+} from '../../ui/componentsV2.js';
+import {
+  safeClosePanel,
+  safeReplyV2,
+  safeUpdateV2,
+  verifyPanelOwner,
+} from '../../ui/interactionHelpers.js';
+import { renderNeonBar, resolveUserAvatarUrl, THEME } from '../../ui/theme.js';
+import { ASSET_PATHS, buildAssetAttachment } from '../../utils/assetRegistry.js';
 import { formatVnd } from '../../utils/format.js';
 import { hasBotRole, resolveBotRole } from '../../utils/permissions.js';
 import { buildAdminDashboardPayload } from '../admin/index.js';
@@ -17,16 +31,16 @@ const HELP_CATEGORIES = {
   overview: {
     label: 'Tổng Quan Hệ Thống',
     emoji: '🏠',
-    title: '🎮 DISCORD GAME BOT PRO — TRUNG TÂM HƯỚNG DẪN',
+    title: '🎮 DISCORD GAME BOT PRO MAX — TRUNG TÂM HƯỚNG DẪN',
     body: [
-      'Chào mừng bạn đến với hệ sinh thái **Kinh Tế VNĐ, Trò Chơi Dân Gian, Nối Từ Tiếng Việt, Thú Cưng, Nhiệm Vụ & Chống Spam @Mention**!',
+      'Chào mừng bạn đến với ứng dụng **GAME CENTER PRO MAX (Discord Components V2)** — tích hợp **Kinh Tế VNĐ, 7 Trò Chơi Trực Quan, Nối Từ 1v1, Thú Cưng, Nhiệm Vụ & Chống Spam @Mention**!',
       '',
-      '📌 **Các phân khu chính (Chọn ở Menu bên dưới để xem chi tiết):**',
+      '📌 **Các phân khu chính (Chọn nhanh ở Menu bên dưới):**',
       '• 💰 **Economy:** Tiền tệ VNĐ, điểm danh, đi làm, chuyển khoản & Ngân hàng sinh lãi.',
-      '• 🎲 **Games:** Bầu Cua, Tài Xỉu, Nối Từ Tiếng Việt, Đồng Xu, Đoán Số, Đua Thú & Oẳn Tù Tì.',
-      '• 📜 **Quest & Event:** Nhiệm vụ Ngày/Tuần/Đặc biệt & Sự kiện đua Top máy chủ.',
-      '• 🛒 **Shop & Pets:** Cửa hàng vật phẩm, Hộp quà bí ẩn & Hệ thống nuôi Thú cưng.',
-      '• 👤 **Profile & Crime:** Hồ sơ cấp độ, Danh hiệu, Cướp tiền & Săn thưởng Truy Nã.',
+      '• 🎲 **Games:** `/games` Game Center PRO MAX + 7 trò chơi chính thức (Bầu Cua, Tài Xỉu, Nối Từ, Oẳn Tù Tì, Đoán Số, Đồng Xu, Đua Thú).',
+      '• 📜 **Quest & Event:** 9 Nhiệm vụ Ngày, 4 Nhiệm vụ Tuần & Sự kiện đua Top Server.',
+      '• 🛒 **Shop & Pets:** Cửa hàng vật phẩm, Trứng Thú Cưng & Nuôi Linh Thú.',
+      '• 👤 **Profile & Crime:** Hồ sơ cấp độ, Danh hiệu, Cướp tiền & Truy Nã.',
       '• 🛡️ **Admin & Anti-Spam:** Quản trị ADMIN PRO, Cài kênh Game, OWNER & Chống Spam Tag.',
     ].join('\n'),
   },
@@ -35,7 +49,7 @@ const HELP_CATEGORIES = {
     emoji: '💰',
     title: '💰 Danh Mục ECONOMY — Tiền Tệ VNĐ & Ngân Hàng',
     body: [
-      '• `/balance [user]` — Xem số dư Ví, Ngân hàng, Tiết kiệm & xếp hạng.',
+      '• `/balance [user]` — Xem số dư Ví, Ngân hàng, Tiết kiệm & tài sản ròng.',
       '• `/daily` • `/weekly` • `/monthly` — Nhận thưởng định kỳ (tích chuỗi ngày).',
       '• `/work` • `/beg` — Đi làm kiếm lương hoặc ăn xin may rủi.',
       '• `/pay <user> <amount>` — Chuyển khoản VNĐ an toàn giữa người chơi.',
@@ -47,18 +61,16 @@ const HELP_CATEGORIES = {
   games: {
     label: 'Games — Game Center & 7 Trò Chơi',
     emoji: '🎲',
-    title: '🎲 Danh Mục GAMES — Trung Tâm Trò Chơi Tương Tác Trực Quan',
+    title: '🎲 Danh Mục GAMES — Game Center PRO MAX (Components V2)',
     body: [
-      '• `/games` — **Mở Game Center Hình Ảnh Trực Quan** (danh sách 7 game, xem luật, số người đang chơi & nút tham gia ngay).',
-      '• `/baucua` — **Bầu Cua Bàn Lưới 6 Linh Vật** (đặt tiền riêng từng cửa, GIF lắc xúc xắc, thưởng **2x / 3x / 4x**).',
-      '• `/taixiu` — **Sòng Tài Xỉu Casino** (khu vực TÀI 11–17 & XỈU 4–10, tổng 3/18 Nhà cái thắng, hình 3 xúc xắc thực tế).',
-      '• `/noitu` — **Game Show Nối Từ Tiếng Việt (1v1)** có Avatar, thanh lượt chơi, đếm ngược 30s & thưởng chuỗi thắng VNĐ.',
-      '• `/rps` — **Oẳn Tù Tì Kéo • Búa • Bao** (hiệu ứng đếm ngược mở kết quả đồng thời, hỗ trợ Bot & PvP).',
-      '• `/guess` — **Đoán Số Bí Ẩn Nhiều Lượt** (giới hạn lượt đoán kèm gợi ý **Lớn Hơn / Nhỏ Hơn** & mở két thưởng).',
-      '• `/coinflip` — **Tung Đồng Xu Hoàng Kim** (chọn Sấp / Ngửa, hiệu ứng xoay xu trên không nhận 2x).',
-      '• `/race` — **Đua Thú Tốc Độ** (5 chiến thú tranh tài trực tiếp qua từng chặng tới vạch đích, thưởng 4.5x).',
-      '',
-      '📍 *Lưu ý: Cả 7 trò chơi đều sử dụng hình ảnh cục bộ sắc nét và hoạt động tại đúng kênh riêng do Admin cài đặt!*',
+      '• `/games` — **Mở ứng dụng Game Center PRO MAX** (7 khu vực: Trang chủ, Danh sách game, Ví tiền, Nhiệm vụ, Cửa hàng, Hồ sơ & Bảng xếp hạng).',
+      '• `/baucua` — **Bầu Cua PRO MAX** (lưới MediaGallery 6 linh vật, đặt riêng từng cửa, thưởng **2x / 3x / 4x**).',
+      '• `/taixiu` — **Tài Xỉu Casino VIP** (TÀI 11–17 & XỈU 4–10, tổng 3/18 Nhà cái thắng, bộ 3 xúc xắc trực quan).',
+      '• `/noitu` — **Game Show Nối Từ Tiếng Việt 1v1** (2 khu vực Avatar người chơi, thanh lượt, đếm ngược 30s).',
+      '• `/rps` — **Oẳn Tù Tì Kéo • Búa • Bao** (hình ảnh đối đầu 2 bên, đếm ngược đồng thời, Bot & PvP).',
+      '• `/guess` — **Đoán Số Bí Ẩn** (khoảng thu hẹp tự động, gợi ý **Lớn Hơn / Nhỏ Hơn**, mở két thưởng).',
+      '• `/coinflip` — **Tung Đồng Xu Hoàng Kim** (đồng xu Sấp / Ngửa lớn, xoay xu nhận 2x).',
+      '• `/race` — **Đua Thú Tốc Độ** (5 chiến thú tranh tài trực tiếp qua từng chặng tới đích, thưởng 4.5x).',
     ].join('\n'),
   },
   quest: {
@@ -66,7 +78,7 @@ const HELP_CATEGORIES = {
     emoji: '📜',
     title: '📜 Danh Mục QUEST & EVENT — Nhiệm Vụ & Đua Top',
     body: [
-      '• `/quest daily` — **9 nhiệm vụ hằng ngày** (Đăng nhập, Đi làm & đủ cả 7 trò chơi chính thức) kèm banner & thanh tiến độ.',
+      '• `/quest daily` — **9 nhiệm vụ hằng ngày** (Đăng nhập, Đi làm & đủ cả 7 trò chơi chính thức).',
       '• `/quest weekly` — **4 nhiệm vụ lớn hằng tuần** (Tổng trận, Thắng trận, Tích lũy VNĐ & Chuỗi nhiệm vụ).',
       '• `/quest special` — Nhiệm vụ Tân Thủ, Cao Thủ & Sự kiện giới hạn.',
       '• `/quest claim [quest_id]` — Nhận thưởng nhiệm vụ (hoặc bấm nút **Nhận Thưởng Ngay**).',
@@ -78,9 +90,9 @@ const HELP_CATEGORIES = {
     emoji: '🛒',
     title: '🛒 Danh Mục SHOP & PETS — Mua Sắm & Nuôi Thú',
     body: [
-      '• `/shop` • `/buy` • `/inventory` • `/use` • `/sell` — Mua & dùng Vé May Mắn, Thẻ x2 EXP, Bảo Hiểm, Khung Hồ Sơ, Danh Hiệu & **Hộp Quà Bí Ẩn**.',
+      '• `/shop` • `/buy` • `/inventory` • `/use` • `/sell` — Mua & dùng Vé May Mắn, Thẻ x2 EXP, Bảo Hiểm, Trứng Thú Cưng, Khung Hồ Sơ, Danh Hiệu & Hộp Quà Bí Ẩn.',
       '• `/pet shop` • `/pet buy` — Nhận nuôi Chó, Mèo, Cáo, Phượng Hoàng, Kỳ Lân & Rồng.',
-      '• `/pet info` • `/pet feed` • `/pet upgrade` • `/pet rename` • `/pet equip` • `/pet collection` — Chăm sóc thú cưng nhận Bonus EXP & thưởng Nhiệm vụ.',
+      '• `/pet info` • `/pet feed` • `/pet upgrade` • `/pet rename` • `/pet equip` • `/pet collection` — Chăm sóc thú cưng nhận Bonus EXP & Nhiệm vụ.',
     ].join('\n'),
   },
   profile: {
@@ -89,10 +101,10 @@ const HELP_CATEGORIES = {
     title: '👤 Danh Mục PROFILE & CRIME — Hồ Sơ & Giang Hồ',
     body: [
       '• `/profile [user] [equip_title]` — Xem Cấp độ, Huy hiệu, Khung viền & đổi Danh hiệu.',
-      '• `/rob <target>` — Lẻn cướp ví tiền mặt của người khác (thất bại bị phạt & tăng Truy Nã!).',
+      '• `/rob <target>` — Lẻn cướp ví tiền mặt của người khác (chống farm lặp mục tiêu).',
       '• `/protect [days]` — Mua Bảo Hiểm Chống Cướp bảo vệ ví tiền an toàn.',
       '• `/bounty <target> <amount>` — Treo thưởng Truy Nã lên mục tiêu.',
-      '• `/wanted` — Xem Bảng Vàng Truy Nã (cướp trúng người bị truy nã ẵm trọn tiền thưởng!).',
+      '• `/wanted` — Xem Bảng Vàng Truy Nã toàn Server.',
     ].join('\n'),
   },
   admin: {
@@ -103,7 +115,7 @@ const HELP_CATEGORIES = {
       '• `/admin game setchannel <game> <ch>` — **Chỉ định kênh chat bắt buộc cho từng trò chơi**.',
       '• `/admin game channels` • `/admin game clearchannel` — Xem hoặc gỡ kênh trò chơi.',
       '• `/admin noitu reward|cooldown|timeout|enable|disable|addword` — Điều chỉnh thưởng VNĐ, thời gian & từ điển Nối Từ PRO.',
-      '• `/admin system dashboard` — Bảng điều khiển tương tác toàn diện (Button + Select + Modal).',
+      '• `/admin system dashboard` — Bảng điều khiển tương tác toàn diện.',
       '• `/admin user|economy|quest|event|system ...` — Quản lý người chơi, tiền tệ, sao lưu SQLite.',
       '• `/owner ...` — Đặc quyền tối cao chỉ dành cho OWNER (`1243061570247069696`).',
       '• `/antispam ...` — Hệ thống tự động phát hiện & xử phạt Spam `@Mention` trên Server.',
@@ -113,12 +125,6 @@ const HELP_CATEGORIES = {
 
 function buildHelpPayload(userId, catKey = 'overview', fromMenu = false) {
   const cat = HELP_CATEGORIES[catKey] ?? HELP_CATEGORIES.overview;
-  const embed = new EmbedBuilder()
-    .setColor(COLORS.PRIMARY)
-    .setTitle(cat.title)
-    .setDescription(cat.body)
-    .setFooter({ text: 'Bảng cũ sẽ tự động xóa khi bạn mở bảng mới để giữ gọn đoạn chat!' })
-    .setTimestamp();
 
   const selectRow = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
@@ -134,7 +140,13 @@ function buildHelpPayload(userId, catKey = 'overview', fromMenu = false) {
       )
   );
 
-  const navBtns = [];
+  const navBtns = [
+    new ButtonBuilder()
+      .setCustomId(`gc:home:${userId}`)
+      .setLabel('Mở Game Center')
+      .setEmoji('🎮')
+      .setStyle(ButtonStyle.Success),
+  ];
   if (fromMenu) {
     navBtns.push(
       new ButtonBuilder()
@@ -147,15 +159,22 @@ function buildHelpPayload(userId, catKey = 'overview', fromMenu = false) {
   navBtns.push(
     new ButtonBuilder()
       .setCustomId(`core:close:${userId}`)
-      .setLabel('Đóng bảng')
-      .setEmoji('🗑️')
-      .setStyle(ButtonStyle.Secondary)
+      .setLabel('Đóng')
+      .setEmoji('✖️')
+      .setStyle(ButtonStyle.Danger)
   );
 
-  return {
-    embeds: [embed],
-    components: [selectRow, new ActionRowBuilder().addComponents(...navBtns)],
-  };
+  const card = createContainer({
+    accentColor: THEME.NEON_CYAN,
+    children: [
+      textDisplay(`## ${cat.title}\n${cat.body}`),
+      separator(),
+      selectRow,
+      new ActionRowBuilder().addComponents(...navBtns),
+    ],
+  });
+
+  return buildCv2Payload({ containers: [card], clearAttachments: true });
 }
 
 // 1. /help
@@ -170,7 +189,7 @@ export const helpCommand = {
         .setRequired(false)
         .addChoices(
           { name: '💰 Economy (Kinh tế & Ngân hàng)', value: 'economy' },
-          { name: '🎲 Games (Trò chơi & Nối Từ Tiếng Việt)', value: 'games' },
+          { name: '🎲 Games (Game Center & 7 Trò chơi)', value: 'games' },
           { name: '📜 Quest (Nhiệm vụ & Sự kiện)', value: 'quest' },
           { name: '🛒 Shop (Cửa hàng & Thú cưng)', value: 'shop' },
           { name: '👤 Profile (Hồ sơ & Truy nã)', value: 'profile' },
@@ -178,47 +197,40 @@ export const helpCommand = {
         )
     ),
   async execute(interaction) {
-    const cat = interaction.options.getString('category') ?? 'overview';
-    await interaction.reply(buildHelpPayload(interaction.user.id, cat, false));
+    const cat = interaction.options?.getString?.('category') ?? 'overview';
+    await safeReplyV2(interaction, buildHelpPayload(interaction.user.id, cat, false));
   },
 };
 
-// 2. /menu — Bảng điều khiển tương tác trung tâm thân thiện điện thoại & máy tính
-function buildUserMenuPayload(user, ctx) {
+// 2. /menu — Bảng điều khiển tương tác trung tâm Components V2
+function buildUserMenuPayload(user, ctx, flashNote = null) {
   const { db, economySystem, petSystem, bankSystem } = ctx;
   bankSystem.settleInterest(user.id, user.username);
   const u = economySystem.ensureUser(user.id, user.username);
+  const reqExp = expRequiredForLevel(u.level);
   const role = resolveBotRole(db, user.id);
   const titleName = TITLES[u.active_title]?.name ?? '🌱 Tân Thủ';
   const pet = petSystem.getActivePetBonuses(user.id);
 
-  const embed = new EmbedBuilder()
-    .setColor(0x5865f2)
-    .setAuthor({
-      name: `Trung Tâm Điều Khiển Nhanh — ${user.username}`,
-      iconURL: user.displayAvatarURL?.() ?? undefined,
-    })
-    .setDescription(
-      `🏅 **${titleName}** • Vai trò: \`${role}\` • ⭐ **Cấp ${u.level}**\n` +
-        `🐾 Đồng hành: ${pet.pet ? `${pet.species.emoji} **${pet.pet.nickname}** (Lv.${pet.pet.level})` : '*Chưa có*'}`
-    )
-    .addFields(
-      { name: '💵 Ví Tiền Mặt', value: `**${formatVnd(u.wallet)}**`, inline: true },
-      { name: '🏦 Ngân Hàng + TK', value: `**${formatVnd(u.bank + u.savings)}**`, inline: true },
-      { name: '🔥 Chuỗi Điểm Danh', value: `**${u.login_streak} ngày**`, inline: true }
-    )
-    .setFooter({ text: 'Chạm nút bên dưới để thao tác ngay trên bảng này • Bảng cũ tự xóa khi mở mới!' })
-    .setTimestamp();
+  const banner = buildAssetAttachment(ASSET_PATHS.GAME_CENTER_BANNER, 'menu_banner.png');
+  const fallbackThumb = buildAssetAttachment(ASSET_PATHS.COIN_SAP, 'menu_avatar.png');
+  const avatarUrl = resolveUserAvatarUrl(user, fallbackThumb.url);
+  const files = avatarUrl === fallbackThumb.url ? [banner.attachment, fallbackThumb.attachment] : [banner.attachment];
 
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
+      .setCustomId(`gc:home:${user.id}`)
+      .setLabel('Game Center')
+      .setEmoji('🎮')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
       .setCustomId(`core:menu_daily:${user.id}`)
-      .setLabel('Nhận /daily')
+      .setLabel('Điểm danh')
       .setEmoji('📅')
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId(`core:menu_work:${user.id}`)
-      .setLabel('Đi làm /work')
+      .setLabel('Đi làm')
       .setEmoji('💼')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
@@ -230,36 +242,74 @@ function buildUserMenuPayload(user, ctx) {
       .setCustomId(`core:menu_help:${user.id}`)
       .setLabel('Hướng dẫn')
       .setEmoji('📖')
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(`core:close:${user.id}`)
-      .setLabel('Đóng')
-      .setEmoji('🗑️')
       .setStyle(ButtonStyle.Secondary)
   );
 
-  const rows = [row1];
+  const row2Btns = [
+    new ButtonBuilder()
+      .setCustomId(`gc:nav:${user.id}:wallet`)
+      .setLabel('Ví tiền')
+      .setEmoji('💰')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`gc:nav:${user.id}:shop`)
+      .setLabel('Cửa hàng')
+      .setEmoji('🛒')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`gc:nav:${user.id}:profile`)
+      .setLabel('Hồ sơ')
+      .setEmoji('👤')
+      .setStyle(ButtonStyle.Secondary),
+  ];
+
   if (hasBotRole(db, user.id, BOT_ROLES.ADMIN)) {
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`core:menu_admin:${user.id}`)
-          .setLabel('Mở Bảng Điều Khiển ADMIN PRO')
-          .setEmoji('🛡️')
-          .setStyle(ButtonStyle.Danger)
-      )
+    row2Btns.push(
+      new ButtonBuilder()
+        .setCustomId(`core:menu_admin:${user.id}`)
+        .setLabel('ADMIN PRO')
+        .setEmoji('🛡️')
+        .setStyle(ButtonStyle.Danger)
     );
   }
+  row2Btns.push(
+    new ButtonBuilder()
+      .setCustomId(`core:close:${user.id}`)
+      .setLabel('Đóng')
+      .setEmoji('✖️')
+      .setStyle(ButtonStyle.Danger)
+  );
 
-  return { embeds: [embed], components: rows };
+  const card = createContainer({
+    accentColor: THEME.NEON_PURPLE,
+    children: [
+      mediaGallery([{ url: banner.url, description: 'Trung Tâm Điều Khiển Nhanh' }]),
+      sectionWithThumbnail({
+        texts: [
+          `## ⚡ Trung Tâm Điều Khiển Nhanh — ${user.username}\n` +
+            (flashNote ? `✅ **${flashNote}**\n` : '') +
+            `🏅 **${titleName}** • Vai trò: \`${role}\` • ⭐ **Cấp ${u.level}** \`${renderNeonBar(u.exp, reqExp, 8)}\``,
+          `💵 **Ví Tiền Mặt:** \`${formatVnd(u.wallet)}\` • 🏦 **Bank + TK:** \`${formatVnd(u.bank + u.savings)}\`\n` +
+            `🐾 **Thú cưng:** ${pet.pet ? `${pet.species.emoji} **${pet.pet.nickname}** (Lv.${pet.pet.level})` : '*Chưa có*'} • 🔥 Daily: \`${u.login_streak} ngày\``,
+        ],
+        url: avatarUrl,
+        description: `Menu ${user.username}`,
+      }),
+      separator(),
+      row1,
+      new ActionRowBuilder().addComponents(...row2Btns.slice(0, 5)),
+    ],
+  });
+
+  return buildCv2Payload({ containers: [card], files });
 }
 
 export const menuCommand = {
   data: new SlashCommandBuilder()
     .setName('menu')
-    .setDescription('Mở bảng điều khiển tương tác trung tâm (Điểm danh, Đi làm, Nhiệm vụ & Quản trị nhanh)'),
+    .setDescription('Mở bảng điều khiển tương tác trung tâm Components V2 (Game Center, Điểm danh, Đi làm & Quản trị)'),
   async execute(interaction, ctx) {
-    await interaction.reply(buildUserMenuPayload(interaction.user, ctx));
+    await safeReplyV2(interaction, buildUserMenuPayload(interaction.user, ctx));
   },
 };
 
@@ -270,39 +320,28 @@ export async function handleCoreInteraction(interaction, ctx) {
   const parts = id.split(':');
   const [, action, ownerId, extra] = parts;
 
-  if (interaction.user.id !== ownerId) {
-    await interaction.reply({
-      content: '⛔ Đây là bảng điều khiển của người chơi khác! Hãy gõ `/menu` hoặc `/help` cho riêng bạn.',
-      flags: MessageFlags.Ephemeral,
-    });
+  if (!(await verifyPanelOwner(interaction, ownerId, '/menu'))) {
     return true;
   }
 
   if (action === 'close') {
-    if (typeof interaction.message?.delete === 'function') {
-      await interaction.message.delete().catch(async () => {
-        await interaction.update({ content: '✅ Đã đóng bảng.', embeds: [], components: [] });
-      });
-    } else {
-      await interaction.update({ content: '✅ Đã đóng bảng.', embeds: [], components: [] });
-    }
+    await safeClosePanel(interaction, interaction.user.username);
     return true;
   }
 
   if (action === 'menu_back') {
-    await interaction.update(buildUserMenuPayload(interaction.user, ctx));
+    await safeUpdateV2(interaction, buildUserMenuPayload(interaction.user, ctx));
     return true;
   }
 
   if (action === 'help_cat' && interaction.isStringSelectMenu?.()) {
     const fromMenu = extra === '1';
-    await interaction.update(buildHelpPayload(interaction.user.id, interaction.values[0], fromMenu));
+    await safeUpdateV2(interaction, buildHelpPayload(interaction.user.id, interaction.values[0], fromMenu));
     return true;
   }
 
-  // Cập nhật ngay trên cùng tin nhắn /menu (không đẻ thêm tin nhắn mới làm rối chat!)
   if (action === 'menu_help') {
-    await interaction.update(buildHelpPayload(interaction.user.id, 'overview', true));
+    await safeUpdateV2(interaction, buildHelpPayload(interaction.user.id, 'overview', true));
     return true;
   }
 
@@ -312,23 +351,27 @@ export async function handleCoreInteraction(interaction, ctx) {
       interaction.user.username,
       'daily'
     );
-    const updated = buildUserMenuPayload(interaction.user, ctx);
-    updated.embeds[0].spliceFields(0, 0, {
-      name: '🎉 Điểm Danh Thành Công!',
-      value: `Nhận **+${formatVnd(res.reward)}** (Chuỗi ${res.streak} ngày)!`,
-    });
-    await interaction.update(updated);
+    await safeUpdateV2(
+      interaction,
+      buildUserMenuPayload(
+        interaction.user,
+        ctx,
+        `Điểm danh thành công! Nhận +${formatVnd(res.reward)} (Chuỗi ${res.streak} ngày)`
+      )
+    );
     return true;
   }
 
   if (action === 'menu_work') {
     const res = ctx.economySystem.work(interaction.user.id, interaction.user.username);
-    const updated = buildUserMenuPayload(interaction.user, ctx);
-    updated.embeds[0].spliceFields(0, 0, {
-      name: '💼 Hoàn Thành Ca Làm Việc!',
-      value: `${res.jobName}: **+${formatVnd(res.earned)}**!`,
-    });
-    await interaction.update(updated);
+    await safeUpdateV2(
+      interaction,
+      buildUserMenuPayload(
+        interaction.user,
+        ctx,
+        `Hoàn thành ca làm việc (${res.jobName}): +${formatVnd(res.earned)}`
+      )
+    );
     return true;
   }
 
@@ -341,7 +384,7 @@ export async function handleCoreInteraction(interaction, ctx) {
     const anyClaimable = quests.some((q) => q.claimable);
     const lines = quests.map(
       (q) =>
-        `${q.claimed ? '✅' : q.claimable ? '🎁' : '⏳'} **${q.name}**: **${q.progress}/${q.target}** (+${formatVnd(q.rewardVnd)})`
+        `${q.claimed ? '✅' : q.claimable ? '🎁' : '⏳'} **${q.name}**: \`${renderNeonBar(q.progress, q.target, 7)}\` (**${q.progress}/${q.target}** • +${formatVnd(q.rewardVnd)})`
     );
 
     const row = new ActionRowBuilder().addComponents(
@@ -359,20 +402,19 @@ export async function handleCoreInteraction(interaction, ctx) {
       new ButtonBuilder()
         .setCustomId(`core:close:${interaction.user.id}`)
         .setLabel('Đóng')
-        .setEmoji('🗑️')
-        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('✖️')
+        .setStyle(ButtonStyle.Danger)
     );
 
-    await interaction.update({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLORS.PRIMARY)
-          .setTitle('☀️ Nhiệm Vụ Hằng Ngày Của Bạn')
-          .setDescription(lines.join('\n'))
-          .setTimestamp(),
+    const card = createContainer({
+      accentColor: THEME.NEON_CYAN,
+      children: [
+        textDisplay(`## ☀️ Nhiệm Vụ Hằng Ngày Của Bạn\n${lines.join('\n')}`),
+        separator(),
+        row,
       ],
-      components: [row],
     });
+    await safeUpdateV2(interaction, buildCv2Payload({ containers: [card], clearAttachments: true }));
     return true;
   }
 
@@ -382,12 +424,14 @@ export async function handleCoreInteraction(interaction, ctx) {
       interaction.user.username,
       null
     );
-    const updated = buildUserMenuPayload(interaction.user, ctx);
-    updated.embeds[0].spliceFields(0, 0, {
-      name: '🎁 Đã Nhận Thưởng Nhiệm Vụ!',
-      value: `+**${formatVnd(res.totalVnd)}** & +**${res.expResult?.addedExp ?? 0} EXP** (${res.claimedQuests.length} nhiệm vụ)!`,
-    });
-    await interaction.update(updated);
+    await safeUpdateV2(
+      interaction,
+      buildUserMenuPayload(
+        interaction.user,
+        ctx,
+        `Đã nhận thưởng +${formatVnd(res.totalVnd)} & +${res.expResult?.addedExp ?? 0} EXP (${res.claimedQuests.length} nhiệm vụ)!`
+      )
+    );
     return true;
   }
 

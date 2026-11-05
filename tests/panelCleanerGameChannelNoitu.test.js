@@ -7,6 +7,7 @@ import { MessageFlags } from 'discord.js';
 import { GAME_IDS, HARDCODED_OWNER_ID } from '../src/config/constants.js';
 import { safeHandleInteraction } from '../src/events/interactionCreate.js';
 import { createBotSystems } from '../src/systems/index.js';
+import { extractCv2Text, validateCv2Payload } from '../src/ui/componentsV2.js';
 import { globalGuard } from '../src/utils/locks.js';
 
 describe('Auto-Delete Previous Panels & Strict Per-Game Channel Enforcement (All 7 Games)', () => {
@@ -104,8 +105,12 @@ describe('Auto-Delete Previous Panels & Strict Per-Game Channel Enforcement (All
             },
             systems
           );
-          assert.equal(blockedReply?.flags, MessageFlags.Ephemeral, `Game ${gameCmd} phải phản hồi Ephemeral`);
-          assert.match(blockedReply.embeds[0].data.description, /chưa được/);
+          assert.equal(validateCv2Payload(blockedReply).valid, true);
+          assert.ok(
+            (blockedReply.flags & MessageFlags.Ephemeral) !== 0,
+            `Game ${gameCmd} phải phản hồi Ephemeral Components V2`
+          );
+          assert.match(extractCv2Text(blockedReply), /chưa được/);
         }
 
         // 2. OWNER gán kênh riêng biệt cho từng trò qua db / /admin game setchannel
@@ -113,7 +118,7 @@ describe('Auto-Delete Previous Panels & Strict Per-Game Channel Enforcement (All
         db.setGameChannel('guild-strict', 'taixiu', 'chan-taixiu', HARDCODED_OWNER_ID);
         db.setGameChannel('guild-strict', 'noitu', 'chan-noitu', HARDCODED_OWNER_ID);
 
-        // 3. Gọi /noitu ở nhầm kênh Bầu Cua -> Chặn Ephemeral và chỉ sang <#chan-noitu>
+        // 3. Gọi /noitu ở nhầm kênh Bầu Cua -> Chặn Ephemeral V2 và chỉ sang <#chan-noitu>
         let wrongNoitu = null;
         globalGuard.lastActionAt.clear();
         await safeHandleInteraction(
@@ -130,8 +135,9 @@ describe('Auto-Delete Previous Panels & Strict Per-Game Channel Enforcement (All
           },
           systems
         );
-        assert.equal(wrongNoitu.flags, MessageFlags.Ephemeral);
-        assert.match(wrongNoitu.embeds[0].data.description, /<#chan-noitu>/);
+        assert.equal(validateCv2Payload(wrongNoitu).valid, true);
+        assert.ok((wrongNoitu.flags & MessageFlags.Ephemeral) !== 0);
+        assert.match(extractCv2Text(wrongNoitu), /<#chan-noitu>/);
 
         // 4. Bấm nút cũ của Bầu Cua ở nhầm kênh Tài Xỉu cũng bị chặn sạch sẽ
         let wrongBtn = null;
@@ -150,8 +156,9 @@ describe('Auto-Delete Previous Panels & Strict Per-Game Channel Enforcement (All
           },
           systems
         );
-        assert.equal(wrongBtn.flags, MessageFlags.Ephemeral);
-        assert.match(wrongBtn.embeds[0].data.description, /<#chan-baucua>/);
+        assert.equal(validateCv2Payload(wrongBtn).valid, true);
+        assert.ok((wrongBtn.flags & MessageFlags.Ephemeral) !== 0);
+        assert.match(extractCv2Text(wrongBtn), /<#chan-baucua>/);
 
         // 5. Gọi /noitu lobby tại ĐÚNG kênh chan-noitu -> Thành công!
         let okNoitu = null;
@@ -170,7 +177,8 @@ describe('Auto-Delete Previous Panels & Strict Per-Game Channel Enforcement (All
           },
           systems
         );
-        assert.match(okNoitu.embeds[0].data.title, /NỐI TỪ TIẾNG VIỆT PRO/);
+        assert.equal(validateCv2Payload(okNoitu).valid, true);
+        assert.match(extractCv2Text(okNoitu), /NỐI TỪ TIẾNG VIỆT PRO/);
       } finally {
         await systems.db.close();
       }

@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import { COMMAND_MAP } from '../src/commands/index.js';
 import { HARDCODED_OWNER_ID } from '../src/config/constants.js';
 import { handleMessageCreate } from '../src/events/messageCreate.js';
+import { extractCv2Text, validateCv2Payload } from '../src/ui/componentsV2.js';
 import { createBotSystems } from '../src/systems/index.js';
 import {
   getFirstToken,
@@ -160,41 +161,42 @@ describe('TRÒ CHƠI NỐI TỪ TIẾNG VIỆT PRO — Toàn Bộ 11 Kịch Bả
         assert.equal(boardEdits.length, 0);
         assert.equal(channelSends.length, 0);
 
-        // Lượt 1: p1 nhập "Học sinh" -> Hợp lệ! Chỉnh sửa trực tiếp Embed bàn đấu (không gửi tin nhắn mới!)
+        // Lượt 1: p1 nhập "Học sinh" -> Hợp lệ! Chỉnh sửa trực tiếp Container V2 bàn đấu (không gửi tin nhắn mới!)
         await sendMsg('p1', 'Học sinh');
         assert.equal(boardEdits.length, 1);
         assert.equal(channelSends.length, 0);
-        assert.equal(boardEdits[0].embeds[0].data.title, '🟢 NỐI TỪ – HỢP LỆ!');
-        assert.match(boardEdits[0].embeds[0].data.description, /Học sinh/);
-        assert.match(boardEdits[0].embeds[0].data.description, /Sinh/);
+        assert.equal(validateCv2Payload(boardEdits[0]).valid, true);
+        assert.match(extractCv2Text(boardEdits[0]), /NỐI TỪ – HỢP LỆ!/);
+        assert.match(extractCv2Text(boardEdits[0]), /Học sinh/);
+        assert.match(extractCv2Text(boardEdits[0]), /Sinh/);
 
         // p1 cố tình tự nối tiếp từ của chính mình khi đang là lượt p2 -> Báo sai lượt!
         await sendMsg('p1', 'Sinh viên');
         assert.equal(channelSends.length, 1);
-        assert.equal(channelSends[0].payload.embeds[0].data.title, '⛔ CHƯA ĐẾN LƯỢT CỦA BẠN!');
+        assert.equal(validateCv2Payload(channelSends[0].payload).valid, true);
+        assert.match(extractCv2Text(channelSends[0].payload), /CHƯA ĐẾN LƯỢT CỦA BẠN!/);
 
         // p2 nhập từ sai tiền tố "Học tập" -> Báo 🔴 TỪ KHÔNG HỢP LỆ! (chỉnh sửa ngay trên cùng khung cảnh báo fb-1, vẫn giữ lượt của p2!)
         await sendMsg('p2', 'Học tập');
         assert.equal(channelSends.length, 1); // KHÔNG tạo tin nhắn rác thứ 2!
         assert.equal(channelSends[0].editedPayloads.length, 1);
-        assert.equal(channelSends[0].editedPayloads[0].embeds[0].data.title, '🔴 TỪ KHÔNG HỢP LỆ!');
-        assert.match(channelSends[0].editedPayloads[0].embeds[0].data.description, /bắt đầu bằng \*\*Sinh\*\*/);
+        assert.equal(validateCv2Payload(channelSends[0].editedPayloads[0]).valid, true);
+        assert.match(extractCv2Text(channelSends[0].editedPayloads[0]), /TỪ KHÔNG HỢP LỆ!/);
+        assert.match(extractCv2Text(channelSends[0].editedPayloads[0]), /bắt đầu bằng \*\*Sinh\*\*/);
 
-        // p2 nhập hợp lệ "Sinh viên" -> Khung lỗi fb-1 tự bị xóa & Embed bàn đấu chỉnh sửa sang lượt 2!
+        // p2 nhập hợp lệ "Sinh viên" -> Khung lỗi fb-1 tự bị xóa & Container V2 bàn đấu chỉnh sửa sang lượt 2!
         await sendMsg('p2', 'Sinh viên');
         assert.equal(channelSends[0].deleted, true);
         assert.equal(boardEdits.length, 2);
-        assert.match(boardEdits[1].embeds[0].data.description, /Sinh viên/);
-        assert.match(boardEdits[1].embeds[0].data.description, /Viên/);
+        assert.match(extractCv2Text(boardEdits[1]), /Sinh viên/);
+        assert.match(extractCv2Text(boardEdits[1]), /Viên/);
 
-        // Chuỗi thực tế kiểm tra từ đã sử dụng: p1: "Viên chức" -> p2: "Chức năng" -> p1: "Năng lượng" -> p2: "Lượng giác" -> p1: "Giác quan" -> p2: "Quan tâm" -> p1: "Tâm sinh"?
-        // Hoặc nối tự nhiên vòng về chữ "học": p1 nối "Viên chức" -> p2 nối "Chức năng" -> p1 nối "Năng lực" -> p2 nối "Lực lượng"
+        // Chuỗi thực tế kiểm tra từ đã sử dụng
         await sendMsg('p1', 'Viên chức'); // hợp lệ -> chữ tiếp: chức
         await sendMsg('p2', 'Chức năng'); // hợp lệ -> chữ tiếp: năng
         await sendMsg('p1', 'Năng lực'); // hợp lệ -> chữ tiếp: lực
         await sendMsg('p2', 'Lực lượng'); // hợp lệ -> chữ tiếp: lượng
 
-        // Mở thêm 1 vòng lặp thực tế về chữ "sinh": đặt từ nối tự nhiên qua "khóa học" -> chữ tiếp "học", rồi p2 gõ lại "Học sinh" (đã dùng ở Lượt 1!)
         wordChainSystem.dictionary.addWord('tử học');
         await sendMsg('p1', 'Lượng tử'); // hợp lệ -> tiếng tiếp theo: tử
         await sendMsg('p2', 'Tử học'); // hợp lệ -> tiếng tiếp theo là "học"!
@@ -202,8 +204,9 @@ describe('TRÒ CHƠI NỐI TỪ TIẾNG VIỆT PRO — Toàn Bộ 11 Kịch Bả
         // p1 cố tình nhập lại "Học sinh" (đã xuất hiện ở Lượt 1) -> Phải báo chính xác ⚠️ TỪ ĐÃ ĐƯỢC SỬ DỤNG! và p1 vẫn còn lượt!
         await sendMsg('p1', 'Học sinh');
         const lastAlert = channelSends[channelSends.length - 1];
-        assert.equal(lastAlert.payload.embeds[0].data.title, '⚠️ TỪ ĐÃ ĐƯỢC SỬ DỤNG!');
-        assert.match(lastAlert.payload.embeds[0].data.description, /vẫn còn lượt chơi|chọn một từ khác/i);
+        assert.equal(validateCv2Payload(lastAlert.payload).valid, true);
+        assert.match(extractCv2Text(lastAlert.payload), /TỪ ĐÃ ĐƯỢC SỬ DỤNG!/);
+        assert.match(extractCv2Text(lastAlert.payload), /vẫn còn lượt chơi|chọn một từ khác/i);
         assert.equal(room.currentTurnUserId, 'p1');
 
         wordChainSystem.shutdownCleanup();

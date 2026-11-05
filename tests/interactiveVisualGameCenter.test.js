@@ -29,6 +29,7 @@ import {
   SHOP_ITEMS,
 } from '../src/config/constants.js';
 import { createBotSystems } from '../src/systems/index.js';
+import { extractCv2Text, validateCv2Payload } from '../src/ui/componentsV2.js';
 import {
   ASSET_PATHS,
   ASSETS_DIR,
@@ -140,16 +141,18 @@ describe('DISCORD GAME BOT PRO – Interactive Visual Game Center & Zero-Boss Gu
           amount: 100_000,
         });
 
-        // Kiểm tra Game Center Home & Detail
+        // Kiểm tra Game Center PRO MAX Home & Detail (Discord Components V2)
         const home = buildGameCenterHomePayload(mockUser, 'guild-1', systems);
-        assert.equal(home.files.length, 1);
-        assert.equal(home.components.length, 3);
-        assert.ok(home.embeds[0].data.description.includes('Bầu Cua'));
-        assert.ok(home.embeds[0].data.description.includes('Đua Thú'));
+        assert.equal(validateCv2Payload(home).valid, true);
+        assert.ok(home.files.length >= 1);
+        assert.ok(home.components.length >= 2 && home.components.length <= 3);
+        assert.ok(extractCv2Text(home).includes('Bầu Cua'));
+        assert.ok(extractCv2Text(home).includes('GAME CENTER PRO MAX'));
 
         const detail = buildGameDetailPayload(mockUser, 'guild-1', 'taixiu', systems, true);
+        assert.equal(validateCv2Payload(detail).valid, true);
         assert.equal(detail.files.length, 1);
-        assert.ok(detail.embeds[0].data.description.includes('LUẬT CHƠI'));
+        assert.ok(extractCv2Text(detail).includes('LUẬT CHƠI'));
 
         // Chặn mở bàn trực tiếp nếu bấm Tham Gia từ kênh chưa được gán cho game đó
         db.setGameChannel('guild-1', 'taixiu', 'chan-taixiu', '1243061570247069696');
@@ -169,9 +172,10 @@ describe('DISCORD GAME BOT PRO – Interactive Visual Game Center & Zero-Boss Gu
           systems,
           () => ({})
         );
-        assert.ok(ephemeralRedirect.content.includes('<#chan-taixiu>'));
+        assert.equal(validateCv2Payload(ephemeralRedirect).valid, true);
+        assert.ok(extractCv2Text(ephemeralRedirect).includes('<#chan-taixiu>'));
 
-        // Kiểm tra cả 6 bảng đặt cược hình ảnh đều <= 5 ActionRows và KHÔNG trừ tiền khi chọn chip / hủy
+        // Kiểm tra cả 6 bảng đặt cược Components V2 đều hợp lệ chuẩn Discord API (<= 40 components) và KHÔNG trừ tiền khi chọn chip / hủy
         const boards = [
           buildBauCuaBoardPayload(mockUser, systems),
           buildTaiXiuBoardPayload(mockUser, systems),
@@ -181,7 +185,8 @@ describe('DISCORD GAME BOT PRO – Interactive Visual Game Center & Zero-Boss Gu
           buildRaceBoardPayload(mockUser, systems),
         ];
         for (const b of boards) {
-          assert.ok(b.components.length >= 4 && b.components.length <= 5);
+          const check = validateCv2Payload(b);
+          assert.equal(check.valid, true, check.reason || 'Valid V2 payload');
           assert.ok(b.files.length >= 1);
         }
 

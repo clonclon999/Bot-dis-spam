@@ -1,129 +1,114 @@
-import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from 'discord.js';
 import { SHOP_ITEMS, TITLES } from '../../config/constants.js';
 import { expRequiredForLevel } from '../../systems/levelSystem.js';
-import { COLORS } from '../../utils/embeds.js';
-import { formatRemainingMs, formatVnd, renderProgressBar } from '../../utils/format.js';
+import {
+  buildCv2NoticePayload,
+  buildCv2Payload,
+  createContainer,
+  mediaGallery,
+  sectionWithThumbnail,
+  separator,
+  textDisplay,
+} from '../../ui/componentsV2.js';
+import { safeReplyV2 } from '../../ui/interactionHelpers.js';
+import { renderNeonBar, resolveUserAvatarUrl, THEME } from '../../ui/theme.js';
+import { ASSET_PATHS, buildAssetAttachment } from '../../utils/assetRegistry.js';
+import { formatVnd } from '../../utils/format.js';
 import { resolveBotRole } from '../../utils/permissions.js';
-
-const TITLE_CHOICES = Object.values(TITLES).map((t) => ({
-  name: t.name,
-  value: t.id,
-}));
 
 // 1. /profile
 const profileCmd = {
   data: new SlashCommandBuilder()
     .setName('profile')
-    .setDescription('Xem Hồ Sơ Cá Nhân, Cấp Độ, Huy Hiệu, Khung Viền hoặc đổi Danh Hiệu')
+    .setDescription('Xem Hồ sơ cá nhân, Cấp độ, Huy hiệu, Khung viền & Thú cưng đồng hành (Components V2)')
     .addUserOption((o) =>
-      o.setName('user').setDescription('Xem hồ sơ của người chơi khác').setRequired(false)
+      o.setName('user').setDescription('Xem hồ sơ người chơi khác').setRequired(false)
     )
     .addStringOption((o) =>
       o
         .setName('equip_title')
-        .setDescription('Chọn danh hiệu đã mở khóa để hiển thị lên hồ sơ của bạn')
+        .setDescription('Đổi danh hiệu đang mở khóa của bạn (tùy chọn)')
         .setRequired(false)
-        .addChoices(...TITLE_CHOICES)
+        .addChoices(
+          ...Object.values(TITLES).map((t) => ({ name: t.name, value: t.id }))
+        )
     ),
-
-  async execute(interaction, { db, economySystem, levelSystem, petSystem }) {
-    const equipTitleId = interaction.options.getString('equip_title');
-    if (equipTitleId) {
-      economySystem.ensureUser(interaction.user.id, interaction.user.username);
-      levelSystem.evaluateMilestoneTitles(interaction.user.id);
-      const equipped = levelSystem.equipTitle(interaction.user.id, equipTitleId);
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(COLORS.SUCCESS)
-            .setTitle('🏅 Đã Trang Bị Danh Hiệu Mới!')
-            .setDescription(`Hồ sơ của bạn hiện đang hiển thị danh hiệu: **${equipped.name}**.`),
-        ],
-      });
-      return;
+  async execute(interaction, { db, economySystem, petSystem, bankSystem }) {
+    const equipTitle = interaction.options.getString('equip_title');
+    if (equipTitle) {
+      const uSelf = economySystem.ensureUser(interaction.user.id, interaction.user.username);
+      const unlocked = JSON.parse(uSelf.unlocked_titles || '["tan_thu"]');
+      if (!unlocked.includes(equipTitle)) {
+        throw new Error(`Bạn chưa mở khóa danh hiệu **${TITLES[equipTitle]?.name || equipTitle}**!`);
+      }
+      db.run('UPDATE users SET active_title = ? WHERE user_id = ?', [
+        equipTitle,
+        interaction.user.id,
+      ]);
     }
 
     const target = interaction.options.getUser('user') ?? interaction.user;
+    bankSystem.settleInterest(target.id, target.username);
     const u = economySystem.ensureUser(target.id, target.username);
-    levelSystem.evaluateMilestoneTitles(target.id);
-    const fresh = db.get('SELECT * FROM users WHERE user_id = ?', [target.id]);
-
-    const role = resolveBotRole(db, target.id);
-    const activeTitle = TITLES[fresh.active_title]?.name ?? '🌱 Tân Thủ';
-    const unlockedIds = JSON.parse(fresh.unlocked_titles || '["tan_thu"]');
-    const badges = unlockedIds
-      .map((id) => TITLES[id]?.name)
-      .filter(Boolean)
-      .join(' • ');
-
-    const frameBanner = fresh.active_frame
-      ? `${SHOP_ITEMS[fresh.active_frame]?.frameStyle ?? ''}\n`
-      : '';
-
     const petInfo = petSystem.getActivePetBonuses(target.id);
+    const role = resolveBotRole(db, target.id);
+
+    const frameItem = u.active_frame ? SHOP_ITEMS[u.active_frame] : null;
+    const frameBorder = frameItem?.frameStyle ?? '⟦ CYBER STANDARD ⟧';
+    const frameName = frameItem?.name ?? 'Mặc định';
+    const titleObj = TITLES[u.active_title] ?? TITLES.tan_thu;
+    const badges = JSON.parse(u.badges || '[]');
+    const reqExp = expRequiredForLevel(u.level);
+    const totalGames = u.games_won + u.games_lost + u.games_drawn;
+    const winRate = totalGames > 0 ? ((u.games_won / totalGames) * 100).toFixed(1) : '0.0';
+
     const petLine = petInfo.pet
-      ? `${petInfo.species.emoji} **${petInfo.pet.nickname}** (Lv.${petInfo.pet.level}) • *${petInfo.effectLabel}*`
-      : '*Chưa trang bị*';
+      ? `${petInfo.species.emoji} **${petInfo.pet.nickname}** (Lv.${petInfo.pet.level} • No: ${petInfo.pet.currentHunger}%) — *${petInfo.effectLabel}*`
+      : '*Chưa có thú cưng đồng hành*';
 
-    const reqExp = expRequiredForLevel(fresh.level);
-    const winRate =
-      fresh.games_played > 0
-        ? ((fresh.games_won / fresh.games_played) * 100).toFixed(1)
-        : '0.0';
-
-    const now = Date.now();
     const buffs = [];
-    if (fresh.protected_until > now) {
-      buffs.push(`🛡️ Bảo hiểm (${formatRemainingMs(fresh.protected_until - now)})`);
+    const now = Date.now();
+    if (u.protected_until > now) {
+      buffs.push(`🛡️ Bảo hiểm đến <t:${Math.floor(u.protected_until / 1000)}:R>`);
     }
-    if (fresh.exp_boost_until > now) {
-      buffs.push(`✨ x2 EXP (${formatRemainingMs(fresh.exp_boost_until - now)})`);
+    if (u.exp_boost_until > now) {
+      buffs.push(`⚡ x2 EXP đến <t:${Math.floor(u.exp_boost_until / 1000)}:R>`);
     }
-    if (fresh.lucky_boost_until > now) {
-      buffs.push(`🎟️ Vé May Mắn (${formatRemainingMs(fresh.lucky_boost_until - now)})`);
-    }
-
-    const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setAuthor({
-        name: `Hồ Sơ Chiến Binh — ${target.username} [${role}]`,
-        iconURL: target.displayAvatarURL(),
-      })
-      .setThumbnail(target.displayAvatarURL())
-      .setDescription(
-        `${frameBanner}` +
-          `🏅 Danh hiệu hiện tại: **${activeTitle}**\n` +
-          `⭐ **Cấp ${fresh.level}** • \`${renderProgressBar(fresh.exp, reqExp, 10)}\` (${fresh.exp}/${reqExp} EXP)`
-      )
-      .addFields(
-        {
-          name: '💰 Tài Sản Cá Nhân',
-          value: `• Ví: **${formatVnd(fresh.wallet)}**\n• Ngân hàng: **${formatVnd(fresh.bank)}**\n• Tiết kiệm: **${formatVnd(fresh.savings)}**`,
-          inline: true,
-        },
-        {
-          name: '🎲 Thống Kê Giải Trí',
-          value: `• Đã chơi: **${fresh.games_played}** ván\n• Thắng: **${fresh.games_won}** (${winRate}%)\n• Chuỗi Daily: **${fresh.login_streak} ngày**`,
-          inline: true,
-        },
-        {
-          name: '🐾 Thú Cưng & Hiệu Ứng',
-          value: petLine,
-          inline: false,
-        },
-        {
-          name: `🎖️ Bộ Huy Hiệu Đã Mở Khóa (${unlockedIds.length})`,
-          value: badges || '🌱 Tân Thủ',
-          inline: false,
-        }
-      )
-      .setTimestamp();
-
-    if (buffs.length > 0) {
-      embed.addFields({ name: '⚡ Hiệu Ứng Đang Bật', value: buffs.join('  |  ') });
+    if (u.luck_charges > 0) {
+      buffs.push(`🍀 Vé May Mắn: còn ${u.luck_charges} lượt`);
     }
 
-    await interaction.reply({ embeds: [embed] });
+    const pBanner = buildAssetAttachment(ASSET_PATHS.PROFILE_BANNER, 'profile_banner.png');
+    const fbThumb = buildAssetAttachment(ASSET_PATHS.COIN_SAP, 'profile_avatar.png');
+    const avatarUrl = resolveUserAvatarUrl(target, fbThumb.url);
+    const files = avatarUrl === fbThumb.url ? [pBanner.attachment, fbThumb.attachment] : [pBanner.attachment];
+
+    const card = createContainer({
+      accentColor: THEME.NEON_PURPLE,
+      children: [
+        mediaGallery([{ url: pBanner.url, description: `Hồ sơ cá nhân ${target.username}` }]),
+        sectionWithThumbnail({
+          texts: [
+            `## ${frameBorder} Hồ Sơ Cá Nhân — ${target.username}\n` +
+              `🏅 Danh hiệu: **${titleObj.name}** • Khung: **${frameName}** • Vai trò: \`${role}\`\n` +
+              `⭐ **Cấp ${u.level}** \`${renderNeonBar(u.exp, reqExp, 10)}\` (\`${u.exp}/${reqExp} EXP\`)`,
+            `💰 **Tổng Tài Sản:** **${formatVnd(u.wallet + u.bank + u.savings)}**\n` +
+              `┗ Ví: \`${formatVnd(u.wallet)}\` • Bank/TK: \`${formatVnd(u.bank + u.savings)}\``,
+          ],
+          url: avatarUrl,
+          description: `Avatar ${target.username}`,
+        }),
+        separator(),
+        textDisplay(
+          `🎲 **Thành Tích Game:** Thắng \`${u.games_won}\` / Thua \`${u.games_lost}\` / Hòa \`${u.games_drawn}\` *(Winrate: **${winRate}%**)*\n` +
+            `🐾 **Thú Cưng Đồng Hành:** ${petLine}\n` +
+            `🎖️ **Huy Hiệu Đạt Được:** ${badges.length > 0 ? badges.join(' ') : '*Chưa có huy hiệu*'}` +
+            (buffs.length > 0 ? `\n⚡ **Hiệu Ứng Đang Bật:** ${buffs.join('  │  ')}` : '')
+        ),
+      ],
+    });
+
+    await safeReplyV2(interaction, buildCv2Payload({ containers: [card], files }));
   },
 };
 
@@ -150,31 +135,29 @@ const robCmd = {
         res.bountyBonus > 0
           ? `\n🎯 **Thu luôn tiền thưởng Truy Nã của mục tiêu: +${formatVnd(res.bountyBonus)}!**`
           : '';
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(COLORS.SUCCESS)
-            .setTitle('🥷 Phi Vụ Cướp Thành Công!')
-            .setDescription(
-              `Bạn đã lẻn lấy được **+${formatVnd(res.stolen)}** từ ví của <@${victim.id}>!${bountyNote}\n` +
-                `💵 Số dư ví của bạn: **${formatVnd(res.robberAfter)}**`
-            ),
-        ],
-      });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '🥷 Phi Vụ Cướp Thành Công!',
+          body:
+            `Bạn đã lẻn lấy được **+${formatVnd(res.stolen)}** từ ví của <@${victim.id}>!${bountyNote}\n` +
+            `💵 Số dư ví của bạn: **${formatVnd(res.robberAfter)}**`,
+          accentColor: THEME.CYBER_EMERALD,
+        })
+      );
       return;
     }
 
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLORS.DANGER)
-          .setTitle('🚓 Bị Bắt Tại Trận Khi Đi Cướp!')
-          .setDescription(
-            `Phi vụ nhắm vào <@${victim.id}> thất bại! Bạn bị phạt **-${formatVnd(res.fine)}** (bồi thường nạn nhân ${formatVnd(res.compensation)}) và bị treo thưởng Truy Nã thêm **+${formatVnd(res.addedBounty)}**!\n` +
-              `💵 Số dư ví còn lại: **${formatVnd(res.robberAfter)}**`
-          ),
-      ],
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '🚓 Bị Bắt Tại Trận Khi Đi Cướp!',
+        body:
+          `Phi vụ nhắm vào <@${victim.id}> thất bại! Bạn bị phạt **-${formatVnd(res.fine)}** (bồi thường nạn nhân ${formatVnd(res.compensation)}) và bị treo thưởng Truy Nã thêm **+${formatVnd(res.addedBounty)}**!\n` +
+          `💵 Số dư ví còn lại: **${formatVnd(res.robberAfter)}**`,
+        accentColor: THEME.CRIMSON_NEON,
+      })
+    );
   },
 };
 
@@ -195,18 +178,17 @@ const protectCmd = {
     );
     const untilUnix = Math.floor(res.protectedUntil / 1000);
 
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLORS.SUCCESS)
-          .setTitle('🛡️ Kích Hoạt Bảo Hiểm Chống Cướp')
-          .setDescription(
-            `Đã mua thành công gói bảo vệ với chi phí **${formatVnd(res.cost)}**.\n` +
-              `• Bảo vệ ví đến: <t:${untilUnix}:F> (<t:${untilUnix}:R>)\n` +
-              `💵 Ví còn lại: **${formatVnd(res.balanceAfter)}**`
-          ),
-      ],
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '🛡️ Kích Hoạt Bảo Hiểm Chống Cướp',
+        body:
+          `Đã mua thành công gói bảo vệ với chi phí **${formatVnd(res.cost)}**.\n` +
+          `• Bảo vệ ví đến: <t:${untilUnix}:F> (<t:${untilUnix}:R>)\n` +
+          `💵 Ví còn lại: **${formatVnd(res.balanceAfter)}**`,
+        accentColor: THEME.CYBER_EMERALD,
+      })
+    );
   },
 };
 
@@ -239,18 +221,17 @@ const bountyCmd = {
       isTargetBot: target.bot,
     });
 
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLORS.WARNING)
-          .setTitle('🎯 Đã Treo Lệnh Truy Nã!')
-          .setDescription(
-            `<@${interaction.user.id}> vừa treo thưởng lên <@${target.id}>!\n` +
-              `• Tổng mức thưởng Truy Nã hiện tại trên đầu mục tiêu: **${formatVnd(res.totalBounty)}**\n` +
-              `• Lý do: *${reason}*`
-          ),
-      ],
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '🎯 Đã Treo Lệnh Truy Nã!',
+        body:
+          `<@${interaction.user.id}> vừa treo thưởng lên <@${target.id}>!\n` +
+          `• Tổng mức thưởng Truy Nã hiện tại trên đầu mục tiêu: **${formatVnd(res.totalBounty)}**\n` +
+          `• Lý do: *${reason}*`,
+        accentColor: THEME.AMBER_PULSE,
+      })
+    );
   },
 };
 
@@ -269,16 +250,16 @@ const wantedCmd = {
           )
         : ['*Hiện không có ai trên bảng Truy Nã. Thành phố đang bình yên!*'];
 
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLORS.DANGER)
-          .setTitle('📜 Bảng Vàng Truy Nã Toàn Server')
-          .setDescription(lines.join('\n'))
-          .setFooter({ text: 'Ai cướp (/rob) thành công người bị truy nã sẽ ẵm trọn tiền thưởng!' })
-          .setTimestamp(),
-      ],
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '📜 Bảng Vàng Truy Nã Toàn Server',
+        body:
+          `${lines.join('\n')}\n\n` +
+          `*(Ai cướp \`/rob\` thành công người bị truy nã sẽ ẵm trọn tiền thưởng!)*`,
+        accentColor: THEME.CRIMSON_NEON,
+      })
+    );
   },
 };
 

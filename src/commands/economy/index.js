@@ -1,122 +1,183 @@
-import { EmbedBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  SlashCommandBuilder,
+} from 'discord.js';
 import { TITLES } from '../../config/constants.js';
-import { COLORS } from '../../utils/embeds.js';
+import {
+  buildCv2NoticePayload,
+  buildCv2Payload,
+  createContainer,
+  mediaGallery,
+  sectionWithThumbnail,
+  separator,
+  textDisplay,
+} from '../../ui/componentsV2.js';
+import { safeReplyV2 } from '../../ui/interactionHelpers.js';
+import { resolveUserAvatarUrl, THEME } from '../../ui/theme.js';
+import { ASSET_PATHS, buildAssetAttachment } from '../../utils/assetRegistry.js';
 import { formatVnd } from '../../utils/format.js';
 
 // 1. /balance
 const balanceCmd = {
   data: new SlashCommandBuilder()
     .setName('balance')
-    .setDescription('Xem số dư ví tiền mặt, ngân hàng và sổ tiết kiệm VNĐ')
+    .setDescription('Kiểm tra số dư Ví, Ngân hàng, Tiết kiệm và Tổng tài sản VNĐ (Components V2)')
     .addUserOption((o) =>
       o.setName('user').setDescription('Xem số dư của người chơi khác').setRequired(false)
     ),
   async execute(interaction, { economySystem, bankSystem }) {
     const target = interaction.options.getUser('user') ?? interaction.user;
-    if (target.bot) {
-      await interaction.reply({ content: '🤖 Tài khoản Bot không sử dụng ví VNĐ.', flags: MessageFlags.Ephemeral });
-      return;
-    }
     bankSystem.settleInterest(target.id, target.username);
     const bal = economySystem.getBalance(target.id, target.username);
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.PRIMARY)
-      .setAuthor({
-        name: `Tài sản của ${target.username}`,
-        iconURL: target.displayAvatarURL(),
-      })
-      .addFields(
-        { name: '💵 Ví tiền mặt', value: `**${formatVnd(bal.wallet)}**`, inline: true },
-        { name: '🏦 Ngân hàng', value: `**${formatVnd(bal.bank)}**`, inline: true },
-        { name: '💎 Sổ tiết kiệm', value: `**${formatVnd(bal.savings)}**`, inline: true },
-        { name: '📊 Tổng tài sản ròng', value: `**${formatVnd(bal.netWorth)}**`, inline: false }
-      )
-      .setFooter({
-        text: bal.isFrozen
-          ? '❄️ Tài khoản này hiện đang bị đóng băng giao dịch'
-          : 'Đơn vị tiền tệ ảo trong Game Bot PRO',
-      })
-      .setTimestamp();
+    const wBanner = buildAssetAttachment(ASSET_PATHS.WALLET_BANNER, 'wallet_banner.png');
+    const fbThumb = buildAssetAttachment(ASSET_PATHS.COIN_SAP, 'bal_avatar.png');
+    const avatarUrl = resolveUserAvatarUrl(target, fbThumb.url);
+    const files = avatarUrl === fbThumb.url ? [wBanner.attachment, fbThumb.attachment] : [wBanner.attachment];
 
-    await interaction.reply({ embeds: [embed] });
+    const navRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`gc:nav:${interaction.user.id}:wallet`)
+        .setLabel('Quản Lý Ví & Ngân Hàng')
+        .setEmoji('🏦')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`gc:home:${interaction.user.id}`)
+        .setLabel('Game Center')
+        .setEmoji('🎮')
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+    const card = createContainer({
+      accentColor: THEME.NEON_CYAN,
+      children: [
+        mediaGallery([{ url: wBanner.url, description: `Tài khoản VNĐ — ${target.username}` }]),
+        sectionWithThumbnail({
+          texts: [
+            `## 💰 Hồ Sơ Tài Chính — ${target.username}\n` +
+              `• 💵 **Ví tiền mặt:** **${formatVnd(bal.wallet)}**\n` +
+              `• 🏦 **Ngân hàng thường:** **${formatVnd(bal.bank)}**\n` +
+              `• 💎 **Sổ tiết kiệm:** **${formatVnd(bal.savings)}**\n` +
+              `• 📊 **Tổng tài sản ròng:** **${formatVnd(bal.netWorth)}**`,
+            `*(Tiền tệ ảo VNĐ chỉ lưu hành nội bộ để giải trí trong hệ thống Game Center)*`,
+          ],
+          url: avatarUrl,
+          description: `Avatar ${target.username}`,
+        }),
+        separator(),
+        navRow,
+      ],
+    });
+
+    await safeReplyV2(interaction, buildCv2Payload({ containers: [card], files }));
   },
 };
 
-// 2, 3, 4. /daily, /weekly, /monthly
-function makePeriodicCmd(name, desc, title) {
+// 2–4. /daily, /weekly, /monthly
+function createPeriodicCommand(name, desc, periodKey, labelTitle) {
   return {
     data: new SlashCommandBuilder().setName(name).setDescription(desc),
     async execute(interaction, { economySystem }) {
       const res = economySystem.claimPeriodicReward(
         interaction.user.id,
         interaction.user.username,
-        name
+        periodKey
       );
       const streakLine =
-        name === 'daily'
-          ? `\n🔥 Chuỗi đăng nhập liên tục: **${res.streak} ngày** (Thưởng thêm: **+${formatVnd(res.streakBonus)}**)`
+        periodKey === 'daily'
+          ? `\n🔥 Chuỗi đăng nhập liên tiếp: **${res.streak} ngày**`
           : '';
       const lvLine = res.expResult?.leveledUp
-        ? `\n🎉 **THĂNG CẤP!** Bạn đã đạt **Cấp ${res.expResult.newLevel}** (+${formatVnd(res.expResult.levelRewardVnd)})!`
+        ? `\n🎉 **CHÚC MỪNG LÊN CẤP ${res.expResult.newLevel}!** Thưởng thêm +**${formatVnd(res.expResult.levelRewardVnd)}**!`
         : '';
 
-      const embed = new EmbedBuilder()
-        .setColor(COLORS.SUCCESS)
-        .setTitle(title)
-        .setDescription(
-          `Bạn vừa nhận thành công **+${formatVnd(res.reward)}** và **+${res.expResult?.addedExp ?? 0} EXP**!${streakLine}${lvLine}\n` +
-            `💵 Số dư ví hiện tại: **${formatVnd(res.balanceAfter)}**`
-        )
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: `🎁 ${labelTitle}`,
+          body:
+            `Bạn vừa nhận thành công **+${formatVnd(res.reward)}** vào ví!${streakLine}${lvLine}\n` +
+            `💵 Số dư ví hiện tại: **${formatVnd(res.balanceAfter)}**`,
+          accentColor: THEME.CYBER_EMERALD,
+        })
+      );
     },
   };
 }
 
-const dailyCmd = makePeriodicCmd('daily', 'Nhận phần thưởng điểm danh VNĐ hằng ngày', '🎁 Phần Thưởng Hằng Ngày');
-const weeklyCmd = makePeriodicCmd('weekly', 'Nhận phần thưởng VNĐ hằng tuần', '📦 Phần Thưởng Hằng Tuần');
-const monthlyCmd = makePeriodicCmd('monthly', 'Nhận phần thưởng VNĐ hằng tháng', '👑 Phần Thưởng Hằng Tháng');
+const dailyCmd = createPeriodicCommand(
+  'daily',
+  'Điểm danh nhận tiền thưởng VNĐ hằng ngày (tích chuỗi thưởng thêm)',
+  'daily',
+  'Điểm Danh Hằng Ngày Thành Công!'
+);
+const weeklyCmd = createPeriodicCommand(
+  'weekly',
+  'Nhận gói trợ cấp VNĐ hằng tuần',
+  'weekly',
+  'Nhận Quà Hằng Tuần Thành Công!'
+);
+const monthlyCmd = createPeriodicCommand(
+  'monthly',
+  'Nhận đại lễ thưởng VNĐ hằng tháng',
+  'monthly',
+  'Nhận Đại Lễ Hằng Tháng Thành Công!'
+);
 
 // 5. /pay
 const payCmd = {
   data: new SlashCommandBuilder()
     .setName('pay')
-    .setDescription('Chuyển VNĐ từ ví của bạn sang người chơi khác')
+    .setDescription('Chuyển tiền VNĐ an toàn sang ví người chơi khác')
     .addUserOption((o) =>
-      o.setName('user').setDescription('Người nhận VNĐ').setRequired(true)
+      o.setName('user').setDescription('Người nhận tiền').setRequired(true)
     )
     .addIntegerOption((o) =>
       o
         .setName('amount')
-        .setDescription('Số tiền VNĐ muốn chuyển (tối thiểu 1.000)')
+        .setDescription('Số tiền VNĐ muốn chuyển')
         .setMinValue(1000)
         .setRequired(true)
+    )
+    .addStringOption((o) =>
+      o.setName('note').setDescription('Lời nhắn đính kèm (tùy chọn)').setRequired(false)
     ),
   async execute(interaction, { economySystem }) {
-    const target = interaction.options.getUser('user', true);
+    const recipient = interaction.options.getUser('user', true);
     const amount = interaction.options.getInteger('amount', true);
+    const note = interaction.options.getString('note') ?? '';
 
-    const res = economySystem.transfer({
-      fromId: interaction.user.id,
-      fromName: interaction.user.username,
-      toId: target.id,
-      toName: target.username,
+    const res = economySystem.transferVnd({
+      senderId: interaction.user.id,
+      senderName: interaction.user.username,
+      recipientId: recipient.id,
+      recipientName: recipient.username,
       amount,
-      isBotTarget: target.bot,
+      isRecipientBot: recipient.bot,
     });
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.SUCCESS)
-      .setTitle('💸 Chuyển Tiền Thành Công')
-      .setDescription(
-        `<@${interaction.user.id}> đã chuyển **${formatVnd(res.amount)}** cho <@${target.id}>.\n` +
-          `💵 Số dư ví còn lại của bạn: **${formatVnd(res.senderAfter)}**`
-      )
-      .setTimestamp();
+    const feeLine =
+      res.fee > 0
+        ? `• Phí giao dịch (${res.feePct}%): \`${formatVnd(res.fee)}\`\n`
+        : '';
 
-    await interaction.reply({ embeds: [embed] });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '💸 Chuyển Khoản VNĐ Thành Công',
+        body:
+          `• Người gửi: <@${interaction.user.id}>\n` +
+          `• Người nhận: <@${recipient.id}>\n` +
+          `• Số tiền chuyển: **${formatVnd(res.amount)}**\n` +
+          `${feeLine}` +
+          `• Thực nhận: **+${formatVnd(res.netReceived)}**\n` +
+          (note ? `• Lời nhắn: *${note}*\n` : '') +
+          `• Số dư ví còn lại của bạn: **${formatVnd(res.senderBalanceAfter)}**`,
+        accentColor: THEME.CYBER_EMERALD,
+      })
+    );
   },
 };
 
@@ -124,7 +185,7 @@ const payCmd = {
 const topCmd = {
   data: new SlashCommandBuilder()
     .setName('top')
-    .setDescription('Xem bảng xếp hạng Đại Gia VNĐ hoặc Cấp Độ cao nhất')
+    .setDescription('Xem bảng xếp hạng Đại Gia VNĐ hoặc Cấp Độ cao nhất (Components V2)')
     .addStringOption((o) =>
       o
         .setName('type')
@@ -138,6 +199,7 @@ const topCmd = {
   async execute(interaction, { economySystem, levelSystem }) {
     const type = interaction.options.getString('type') ?? 'rich';
     const medals = ['🥇', '🥈', '🥉'];
+    const lbBanner = buildAssetAttachment(ASSET_PATHS.LEADERBOARD_BANNER, 'leaderboard_banner.png');
 
     if (type === 'level') {
       const rows = levelSystem.getLevelLeaderboard(10);
@@ -150,13 +212,14 @@ const topCmd = {
             })
           : ['*Chưa có dữ liệu xếp hạng.*'];
 
-      const embed = new EmbedBuilder()
-        .setColor(COLORS.INFO)
-        .setTitle('⭐ Bảng Xếp Hạng Cấp Độ Server')
-        .setDescription(lines.join('\n'))
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
+      const card = createContainer({
+        accentColor: THEME.NEON_PURPLE,
+        children: [
+          mediaGallery([{ url: lbBanner.url, description: 'Bảng xếp hạng Cấp Độ Server' }]),
+          textDisplay(`## ⭐ Bảng Xếp Hạng Cấp Độ Server\n${lines.join('\n')}`),
+        ],
+      });
+      await safeReplyV2(interaction, buildCv2Payload({ containers: [card], files: [lbBanner.attachment] }));
       return;
     }
 
@@ -169,13 +232,14 @@ const topCmd = {
           })
         : ['*Chưa có dữ liệu xếp hạng.*'];
 
-    const embed = new EmbedBuilder()
-      .setColor(0xf1c40f)
-      .setTitle('🏆 Bảng Xếp Hạng Top Đại Gia VNĐ')
-      .setDescription(lines.join('\n'))
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed] });
+    const card = createContainer({
+      accentColor: THEME.NEON_GOLD,
+      children: [
+        mediaGallery([{ url: lbBanner.url, description: 'Bảng xếp hạng Top Đại Gia VNĐ' }]),
+        textDisplay(`## 🏆 Bảng Xếp Hạng Top Đại Gia VNĐ\n${lines.join('\n')}`),
+      ],
+    });
+    await safeReplyV2(interaction, buildCv2Payload({ containers: [card], files: [lbBanner.attachment] }));
   },
 };
 
@@ -195,13 +259,15 @@ const historyCmd = {
           })
         : ['*Chưa có giao dịch nào được ghi nhận.*'];
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.INFO)
-      .setTitle(`🧾 Lịch Sử Giao Dịch — ${interaction.user.username}`)
-      .setDescription(lines.join('\n'))
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: `🧾 Lịch Sử Giao Dịch — ${interaction.user.username}`,
+        body: lines.join('\n'),
+        accentColor: THEME.NEON_CYAN,
+        ephemeral: true,
+      })
+    );
   },
 };
 
@@ -220,16 +286,16 @@ const workCmd = {
       ? `\n🎉 **THĂNG CẤP ${res.expResult.newLevel}!** Nhận thưởng +**${formatVnd(res.expResult.levelRewardVnd)}**!`
       : '';
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.SUCCESS)
-      .setTitle('💼 Hoàn Thành Ca Làm Việc!')
-      .setDescription(
-        `Bạn vừa làm **${res.jobName}** và nhận lương **+${formatVnd(res.earned)}**${bonusNote}!${lvNote}\n` +
-          `💵 Số dư ví: **${formatVnd(res.balanceAfter)}**`
-      )
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed] });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '💼 Hoàn Thành Ca Làm Việc!',
+        body:
+          `Bạn vừa làm **${res.jobName}** và nhận lương **+${formatVnd(res.earned)}**${bonusNote}!${lvNote}\n` +
+          `💵 Số dư ví: **${formatVnd(res.balanceAfter)}**`,
+        accentColor: THEME.CYBER_EMERALD,
+      })
+    );
   },
 };
 
@@ -240,17 +306,16 @@ const begCmd = {
     .setDescription('Thử vận may xin tiền hỗ trợ từ người qua đường'),
   async execute(interaction, { economySystem }) {
     const res = economySystem.beg(interaction.user.id, interaction.user.username);
-    const embed = new EmbedBuilder()
-      .setColor(res.lucky ? COLORS.SUCCESS : COLORS.WARNING)
-      .setTitle(res.lucky ? '🤲 Gặp Người Tốt Bụng!' : '😅 Chưa Gặp May Rồi')
-      .setDescription(
-        res.lucky
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: res.lucky ? '🤲 Gặp Người Tốt Bụng!' : '😅 Chưa Gặp May Rồi',
+        body: res.lucky
           ? `Một đại gia đi ngang qua đã tặng bạn **+${formatVnd(res.earned)}**!\n💵 Số dư ví: **${formatVnd(res.balanceAfter)}**`
-          : 'Mọi người đều đang bận rộn nên bạn chưa xin được đồng nào lần này. Thử lại sau ít phút nhé!'
-      )
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed] });
+          : 'Mọi người đều đang bận rộn nên bạn chưa xin được đồng nào lần này. Thử lại sau ít phút nhé!',
+        accentColor: res.lucky ? THEME.CYBER_EMERALD : THEME.AMBER_PULSE,
+      })
+    );
   },
 };
 
@@ -287,18 +352,18 @@ const depositCmd = {
       account
     );
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.SUCCESS)
-      .setTitle('🏦 Gửi Tiền Ngân Hàng Thành Công')
-      .setDescription(
-        `Đã gửi **${formatVnd(res.amount)}** vào **${account === 'savings' ? '💎 Sổ Tiết Kiệm' : '🏦 Ngân Hàng Thường'}**.\n` +
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '🏦 Gửi Tiền Ngân Hàng Thành Công',
+        body:
+          `Đã gửi **${formatVnd(res.amount)}** vào **${account === 'savings' ? '💎 Sổ Tiết Kiệm' : '🏦 Ngân Hàng Thường'}**.\n` +
           `• Ví tiền mặt: **${formatVnd(res.walletAfter)}**\n` +
           `• Ngân hàng thường: **${formatVnd(res.bankAfter)}**\n` +
-          `• Sổ tiết kiệm: **${formatVnd(res.savingsAfter)}**`
-      )
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed] });
+          `• Sổ tiết kiệm: **${formatVnd(res.savingsAfter)}**`,
+        accentColor: THEME.CYBER_EMERALD,
+      })
+    );
   },
 };
 
@@ -335,18 +400,18 @@ const withdrawCmd = {
       account
     );
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.PRIMARY)
-      .setTitle('🏧 Rút Tiền Thành Công')
-      .setDescription(
-        `Đã rút **${formatVnd(res.amount)}** về ví tiền mặt.\n` +
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '🏧 Rút Tiền Thành Công',
+        body:
+          `Đã rút **${formatVnd(res.amount)}** về ví tiền mặt.\n` +
           `• Ví tiền mặt: **${formatVnd(res.walletAfter)}**\n` +
           `• Ngân hàng thường: **${formatVnd(res.bankAfter)}**\n` +
-          `• Sổ tiết kiệm: **${formatVnd(res.savingsAfter)}**`
-      )
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed] });
+          `• Sổ tiết kiệm: **${formatVnd(res.savingsAfter)}**`,
+        accentColor: THEME.NEON_CYAN,
+      })
+    );
   },
 };
 
@@ -378,19 +443,19 @@ const interestCmd = {
         ? `🎉 **Đã tất toán lãi tự động (${info.periodsApplied} chu kỳ): +${formatVnd(info.credited)}!**\n\n`
         : '';
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.INFO)
-      .setTitle('🏦 Trung Tâm Lãi Suất & Tiết Kiệm')
-      .setDescription(
-        `${creditBanner}` +
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '🏦 Trung Tâm Lãi Suất & Tiết Kiệm',
+        body:
+          `${creditBanner}` +
           `• 🏦 Số dư Ngân hàng thường: **${formatVnd(info.bank)}** *(Lãi: **${(info.baseRate * 100).toFixed(2)}%** / ${info.intervalHours}h)*\n` +
           `• 💎 Số dư Sổ tiết kiệm: **${formatVnd(info.savings)}** *(Lãi ưu đãi: **${(info.savingsRate * 100).toFixed(2)}%** / ${info.intervalHours}h)*\n` +
-          `• ⏳ Kỳ trả lãi tiếp theo sau: **${bankSystem.formatNextInterestCountdown(info.nextInterestInMs)}**`
-      )
-      .addFields({ name: '📑 Lịch sử Ngân hàng gần đây', value: histText })
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed] });
+          `• ⏳ Kỳ trả lãi tiếp theo sau: **${bankSystem.formatNextInterestCountdown(info.nextInterestInMs)}**\n\n` +
+          `### 📑 Lịch Sử Ngân Hàng Gần Đây\n${histText}`,
+        accentColor: THEME.NEON_PURPLE,
+      })
+    );
   },
 };
 

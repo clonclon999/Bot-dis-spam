@@ -26,6 +26,9 @@ export const ASSET_PATHS = Object.freeze({
   DEFEAT_BANNER: 'banners/defeat.png',
   QUEST_BANNER: 'banners/quest_banner.png',
   SHOP_BANNER: 'banners/shop_banner.png',
+  WALLET_BANNER: 'banners/wallet_banner.png',
+  PROFILE_BANNER: 'banners/profile_banner.png',
+  LEADERBOARD_BANNER: 'banners/leaderboard_banner.png',
 
   GAME_BAUCUA: 'games/baucua.png',
   GAME_TAIXIU: 'games/taixiu.png',
@@ -119,6 +122,130 @@ export function getGameBannerRelPath(gameId) {
     race: ASSET_PATHS.GAME_RACE,
   };
   return map[gameId] || ASSET_PATHS.GAME_CENTER_BANNER;
+}
+
+/**
+ * Tạo danh sách file đính kèm 6 linh vật Bầu Cua cho MediaGallery (lưới 3x2 native trên Discord).
+ */
+export function buildBauCuaMascotGalleryAssets(mascotBets = {}) {
+  const order = [
+    { id: 'bau', name: 'Bầu' },
+    { id: 'cua', name: 'Cua' },
+    { id: 'tom', name: 'Tôm' },
+    { id: 'ca', name: 'Cá' },
+    { id: 'ga', name: 'Gà' },
+    { id: 'nai', name: 'Nai' },
+  ];
+  const files = [];
+  const items = [];
+  for (const m of order) {
+    const fileName = `bc_${m.id}.png`;
+    const att = buildAssetAttachment(ASSET_PATHS.BAUCUA_MASCOT[m.id], fileName);
+    const staked = mascotBets[m.id] || 0;
+    files.push(att.attachment);
+    items.push({
+      url: att.url,
+      description: staked > 0 ? `${m.name} • Đã đặt: ${staked.toLocaleString('vi-VN')} VNĐ` : `${m.name} • Chưa đặt cược`,
+    });
+  }
+  return { files, items };
+}
+
+/**
+ * Tạo 3 hình xúc xắc linh vật Bầu Cua vừa mở bát cho MediaGallery (hỗ trợ trùng linh vật như 2 Bầu + 1 Cua).
+ */
+export function buildBauCuaRollGalleryAssets(rolledMascots) {
+  const files = [];
+  const items = [];
+  rolledMascots.forEach((m, idx) => {
+    const id = typeof m === 'string' ? m : m.id;
+    const label = typeof m === 'string' ? m.toUpperCase() : m.name;
+    const fileName = `bc_rolled_${idx + 1}_${id}.png`;
+    const att = buildAssetAttachment(ASSET_PATHS.BAUCUA_MASCOT[id] || ASSET_PATHS.BAUCUA_MASCOT.bau, fileName);
+    files.push(att.attachment);
+    items.push({
+      url: att.url,
+      description: `Xúc xắc #${idx + 1}: ${label}`,
+    });
+  });
+  return { files, items };
+}
+
+/**
+ * Tạo 3 hình viên xúc xắc 1..6 riêng biệt cho MediaGallery Tài Xỉu (hỗ trợ bộ đôi / bộ ba trùng số).
+ */
+export function buildDiceGalleryAssets(diceValues, prefix = 'tx_die') {
+  const files = [];
+  const items = [];
+  diceValues.forEach((v, idx) => {
+    const face = Math.min(6, Math.max(1, Number(v) || 1));
+    const fileName = `${prefix}_${idx + 1}_${face}.png`;
+    const att = buildAssetAttachment(ASSET_PATHS.DICE_FACE[face], fileName);
+    files.push(att.attachment);
+    items.push({
+      url: att.url,
+      description: `Viên xúc xắc #${idx + 1}: ${face} nút`,
+    });
+  });
+  return { files, items };
+}
+
+/**
+ * Tạo bộ ảnh 3 lựa chọn Kéo • Búa • Bao cho MediaGallery Oẳn Tù Tì.
+ */
+export function buildRpsChoicesGalleryAssets() {
+  const specs = [
+    { id: 'rock', label: 'Búa (Đập gãy Kéo)' },
+    { id: 'paper', label: 'Bao (Bọc trọn Búa)' },
+    { id: 'scissors', label: 'Kéo (Cắt đứt Bao)' },
+  ];
+  const files = [];
+  const items = [];
+  for (const s of specs) {
+    const att = buildAssetAttachment(ASSET_PATHS.RPS_HAND[s.id], `rps_opt_${s.id}.png`);
+    files.push(att.attachment);
+    items.push({ url: att.url, description: s.label });
+  }
+  return { files, items };
+}
+
+/**
+ * Tạo bộ 2 hình bàn tay đối đầu cho kết quả Oẳn Tù Tì (Người chơi 1 vs Đối thủ/Bot).
+ */
+export function buildRpsDuelGalleryAssets(move1, move2, label1 = 'Bạn', label2 = 'Đối thủ') {
+  const a1 = buildAssetAttachment(ASSET_PATHS.RPS_HAND[move1.id], `rps_p1_${move1.id}.png`);
+  const a2 = buildAssetAttachment(ASSET_PATHS.RPS_HAND[move2.id], `rps_p2_${move2.id}.png`);
+  return {
+    files: [a1.attachment, a2.attachment],
+    items: [
+      { url: a1.url, description: `${label1} ra: ${move1.name}` },
+      { url: a2.url, description: `${label2} ra: ${move2.name}` },
+    ],
+  };
+}
+
+/**
+ * Tạo bộ 5 hình chiến thú cho MediaGallery Đua Thú.
+ */
+export function buildRaceRosterGalleryAssets(selectedId = 'horse') {
+  const specs = [
+    { id: 'horse', name: 'Chiến Mã Xích Thố' },
+    { id: 'cheetah', name: 'Báo Đốm Tia Chớp' },
+    { id: 'eagle', name: 'Đại Bàng Kim Dực' },
+    { id: 'wolf', name: 'Sói Bạc Bắc Cực' },
+    { id: 'tiger', name: 'Hổ Trắng Sơn Lâm' },
+  ];
+  const files = [];
+  const items = [];
+  for (const s of specs) {
+    const att = buildAssetAttachment(ASSET_PATHS.RACE_ANIMAL[s.id], `race_opt_${s.id}.png`);
+    files.push(att.attachment);
+    items.push({
+      url: att.url,
+      description: s.id === selectedId ? `⭐ ĐANG CHỌN: ${s.name}` : s.name,
+    });
+  }
+  return { files, items };
 }
 
 // ==============================================================================

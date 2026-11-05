@@ -2,15 +2,26 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
-  MessageFlags,
   SlashCommandBuilder,
 } from 'discord.js';
+import {
+  buildCv2NoticePayload,
+  buildCv2Payload,
+  createContainer,
+  mediaGallery,
+  separator,
+  textDisplay,
+} from '../../ui/componentsV2.js';
+import {
+  safeReplyV2,
+  safeUpdateV2,
+  verifyPanelOwner,
+} from '../../ui/interactionHelpers.js';
+import { renderNeonBar, THEME } from '../../ui/theme.js';
 import { ASSET_PATHS, buildAssetAttachment } from '../../utils/assetRegistry.js';
-import { COLORS } from '../../utils/embeds.js';
-import { formatVnd, renderProgressBar } from '../../utils/format.js';
+import { formatVnd } from '../../utils/format.js';
 
-function buildQuestEmbed(user, scope, quests, imageUrl = null) {
+function buildQuestV2Payload(user, scope, quests, flashBanner = null) {
   const titles = {
     all: '📜 Tổng Quan Nhiệm Vụ Của Bạn',
     daily: '☀️ Nhiệm Vụ Hằng Ngày (Làm mới 00:00 UTC+7)',
@@ -22,58 +33,67 @@ function buildQuestEmbed(user, scope, quests, imageUrl = null) {
     quests.length > 0
       ? quests.map((q) => {
           const statusIcon = q.claimed ? '✅' : q.claimable ? '🎁' : '⏳';
-          const bar = renderProgressBar(q.progress, q.target, 8);
+          const bar = renderNeonBar(q.progress, q.target, 8);
           return (
-            `${statusIcon} **${q.name}** (\`${q.id}\`)\n` +
-            `  ↳ ${q.description} • Thưởng: **${formatVnd(q.rewardVnd)}** + **${q.rewardExp} EXP**\n` +
-            `  ↳ \`${bar}\` (**${q.progress}/${q.target}**)`
+            `${statusIcon} **${q.name}** (\`${q.id}\`) — \`${bar}\` (**${q.progress}/${q.target}**)\n` +
+            `┗ ${q.description} • Thưởng: **${formatVnd(q.rewardVnd)}** + **${q.rewardExp} EXP**`
           );
         })
       : ['*Hiện không có nhiệm vụ nào trong mục này.*'];
 
-  const embed = new EmbedBuilder()
-    .setColor(COLORS.PRIMARY)
-    .setTitle(titles[scope] ?? titles.all)
-    .setDescription(lines.join('\n\n').slice(0, 4000))
-    .setFooter({ text: `Người chơi: ${user.username} • Nhấn nút Nhận Thưởng hoặc dùng /quest claim` })
-    .setTimestamp();
-
-  if (imageUrl) embed.setImage(imageUrl);
-  return embed;
-}
-
-function buildQuestComponents(userId, quests, activeScope) {
   const anyClaimable = quests.some((q) => q.claimable);
+  const qBanner = buildAssetAttachment(ASSET_PATHS.QUEST_BANNER, 'quest_banner.png');
+
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`quest:tab:${userId}:daily`)
+      .setCustomId(`quest:tab:${user.id}:daily`)
       .setLabel('Hằng Ngày')
       .setEmoji('☀️')
-      .setStyle(activeScope === 'daily' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+      .setStyle(scope === 'daily' ? ButtonStyle.Primary : ButtonStyle.Secondary),
     new ButtonBuilder()
-      .setCustomId(`quest:tab:${userId}:weekly`)
+      .setCustomId(`quest:tab:${user.id}:weekly`)
       .setLabel('Hằng Tuần')
       .setEmoji('📅')
-      .setStyle(activeScope === 'weekly' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+      .setStyle(scope === 'weekly' ? ButtonStyle.Primary : ButtonStyle.Secondary),
     new ButtonBuilder()
-      .setCustomId(`quest:tab:${userId}:special`)
+      .setCustomId(`quest:tab:${user.id}:special`)
       .setLabel('Đặc Biệt')
       .setEmoji('🌟')
-      .setStyle(activeScope === 'special' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+      .setStyle(scope === 'special' ? ButtonStyle.Primary : ButtonStyle.Secondary),
     new ButtonBuilder()
-      .setCustomId(`quest:claim_all:${userId}:${activeScope}`)
+      .setCustomId(`quest:claim_all:${user.id}:${scope}`)
       .setLabel('Nhận Thưởng Ngay')
       .setEmoji('🎁')
       .setStyle(ButtonStyle.Success)
-      .setDisabled(!anyClaimable)
+      .setDisabled(!anyClaimable),
+    new ButtonBuilder()
+      .setCustomId(`gc:home:${user.id}`)
+      .setLabel('Game Center')
+      .setEmoji('🏠')
+      .setStyle(ButtonStyle.Secondary)
   );
-  return [row];
+
+  const card = createContainer({
+    accentColor: THEME.NEON_CYAN,
+    children: [
+      mediaGallery([{ url: qBanner.url, description: titles[scope] ?? titles.all }]),
+      textDisplay(
+        `## ${titles[scope] ?? titles.all}\n` +
+          (flashBanner ? `🎉 **Đã Nhận Thưởng Tức Thì!** ${flashBanner}\n\n` : '') +
+          lines.join('\n\n')
+      ),
+      separator(),
+      row,
+    ],
+  });
+
+  return buildCv2Payload({ containers: [card], files: [qBanner.attachment] });
 }
 
 export const questCommand = {
   data: new SlashCommandBuilder()
     .setName('quest')
-    .setDescription('Xem tiến độ và nhận thưởng hệ thống Nhiệm vụ Hằng ngày, Tuần & Đặc biệt')
+    .setDescription('Xem tiến độ và nhận thưởng hệ thống Nhiệm vụ Hằng ngày, Tuần & Đặc biệt (Components V2)')
     .addSubcommand((s) =>
       s.setName('daily').setDescription('Xem danh sách nhiệm vụ hằng ngày')
     )
@@ -110,34 +130,29 @@ export const questCommand = {
         .map((q) => `• **${q.name}**: +**${formatVnd(q.finalVnd)}**`)
         .join('\n');
 
-      const embed = new EmbedBuilder()
-        .setColor(COLORS.SUCCESS)
-        .setTitle('🎁 Nhận Thưởng Nhiệm Vụ Thành Công!')
-        .setDescription(
-          `${claimedList}\n\n` +
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '🎁 Nhận Thưởng Nhiệm Vụ Thành Công!',
+          body:
+            `${claimedList}\n\n` +
             `💰 Tổng VNĐ nhận: **+${formatVnd(res.totalVnd)}**\n` +
             `✨ EXP nhận: **+${res.expResult?.addedExp ?? 0} EXP**\n` +
-            `💵 Số dư ví mới: **${formatVnd(res.balanceAfter)}**`
-        )
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
+            `💵 Số dư ví mới: **${formatVnd(res.balanceAfter)}**`,
+          accentColor: THEME.CYBER_EMERALD,
+        })
+      );
       return;
     }
 
-    const scope = sub; // daily | weekly | special
+    const scope = sub;
     const quests = questSystem.getUserQuests(
       interaction.user.id,
       interaction.user.username,
       scope
     );
-    const qBanner = buildAssetAttachment(ASSET_PATHS.QUEST_BANNER, 'quest_banner.png');
 
-    await interaction.reply({
-      embeds: [buildQuestEmbed(interaction.user, scope, quests, qBanner.url)],
-      files: [qBanner.attachment],
-      components: buildQuestComponents(interaction.user.id, quests, scope),
-    });
+    await safeReplyV2(interaction, buildQuestV2Payload(interaction.user, scope, quests));
   },
 };
 
@@ -146,11 +161,7 @@ export async function handleQuestInteraction(interaction, { questSystem }) {
   if (!id.startsWith('quest:')) return false;
 
   const [, action, ownerId, scope] = id.split(':');
-  if (interaction.user.id !== ownerId) {
-    await interaction.reply({
-      content: '⛔ Đây là bảng nhiệm vụ của người chơi khác! Hãy gõ `/quest daily` cho riêng bạn.',
-      flags: MessageFlags.Ephemeral,
-    });
+  if (!(await verifyPanelOwner(interaction, ownerId, '/quest daily'))) {
     return true;
   }
 
@@ -160,12 +171,7 @@ export async function handleQuestInteraction(interaction, { questSystem }) {
       interaction.user.username,
       scope
     );
-    const qBanner = buildAssetAttachment(ASSET_PATHS.QUEST_BANNER, 'quest_banner.png');
-    await interaction.update({
-      embeds: [buildQuestEmbed(interaction.user, scope, quests, qBanner.url)],
-      files: [qBanner.attachment],
-      components: buildQuestComponents(interaction.user.id, quests, scope),
-    });
+    await safeUpdateV2(interaction, buildQuestV2Payload(interaction.user, scope, quests));
     return true;
   }
 
@@ -180,16 +186,11 @@ export async function handleQuestInteraction(interaction, { questSystem }) {
       interaction.user.username,
       scope || 'daily'
     );
-    const embed = buildQuestEmbed(interaction.user, scope || 'daily', quests);
-    embed.spliceFields(0, 0, {
-      name: '🎉 Đã Nhận Thưởng Tức Thì!',
-      value: `Nhận **+${formatVnd(res.totalVnd)}** & **+${res.expResult?.addedExp ?? 0} EXP** (${res.claimedQuests.length} nhiệm vụ). Ví: **${formatVnd(res.balanceAfter)}**`,
-    });
-
-    await interaction.update({
-      embeds: [embed],
-      components: buildQuestComponents(interaction.user.id, quests, scope || 'daily'),
-    });
+    const flash = `Nhận **+${formatVnd(res.totalVnd)}** & **+${res.expResult?.addedExp ?? 0} EXP** (${res.claimedQuests.length} nhiệm vụ). Ví: **${formatVnd(res.balanceAfter)}**`;
+    await safeUpdateV2(
+      interaction,
+      buildQuestV2Payload(interaction.user, scope || 'daily', quests, flash)
+    );
     return true;
   }
 

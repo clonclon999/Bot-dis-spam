@@ -1,4 +1,3 @@
-import { MessageFlags } from 'discord.js';
 import { COMMAND_MAP, routeComponentInteraction } from '../commands/index.js';
 import {
   BOT_ROLES,
@@ -6,7 +5,9 @@ import {
   GAME_LABELS,
   LOG_CATEGORIES,
 } from '../config/constants.js';
-import { buildFeedbackEmbed, COLORS } from '../utils/embeds.js';
+import { buildCv2NoticePayload } from '../ui/componentsV2.js';
+import { safeReplyV2 } from '../ui/interactionHelpers.js';
+import { THEME } from '../ui/theme.js';
 import { globalGuard } from '../utils/locks.js';
 import { logger, redactSecrets } from '../utils/logger.js';
 import { globalPanelCleaner } from '../utils/panelCleaner.js';
@@ -28,7 +29,7 @@ function resolveInteractionGameId(interaction) {
   if (ALL_GAME_COMMAND_IDS.has(prefix)) return prefix;
   if ((prefix === 'vgame' || prefix === 'vgame_modal') && ALL_GAME_COMMAND_IDS.has(parts[1])) {
     const action = parts[2];
-    if (action === 'back' || action === 'cancel') return null;
+    if (action === 'back' || action === 'cancel' || action === 'close') return null;
     return parts[1];
   }
   return null;
@@ -75,6 +76,7 @@ export function checkGameChannelRestriction(interaction, db) {
 
 /**
  * Bộ định tuyến tổng cho mọi tương tác Discord (`Slash Command`, `Button`, `Select Menu`, `Modal`):
+ * - Phản hồi bằng Discord Components V2 hiện đại, đồng bộ trên Android/iOS & Desktop.
  * - Kiểm tra chế độ Bảo trì (`maintenanceMode`) & Tài khoản bị khóa (`is_banned`).
  * - Bắt buộc mọi trò chơi đều phải chơi đúng kênh đã cài đặt (`checkGameChannelRestriction`).
  * - Tự động xóa bảng cũ khi mở bảng mới (`globalPanelCleaner`) giữ kênh chat gọn gàng.
@@ -96,17 +98,15 @@ export async function handleInteractionCreate(interaction, context) {
 
   // 1. Kiểm tra chế độ bảo trì toàn hệ thống (OWNER và ADMIN vẫn được thao tác)
   if (db?.getSetting('maintenanceMode') && !hasBotRole(db, userId, BOT_ROLES.ADMIN)) {
-    await safeReply(interaction, {
-      embeds: [
-        buildFeedbackEmbed({
-          color: COLORS.WARNING,
-          title: '🛠️ Hệ Thống Đang Bảo Trì Nâng Cấp',
-          description:
-            'Bot hiện đang tạm dừng bảo trì để bảo vệ an toàn dữ liệu người chơi. Vui lòng quay lại sau ít phút nhé!',
-        }),
-      ],
-      flags: MessageFlags.Ephemeral,
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '🛠️ Hệ Thống Đang Bảo Trì Nâng Cấp',
+        body: 'Bot hiện đang tạm dừng bảo trì để bảo vệ an toàn dữ liệu người chơi. Vui lòng quay lại sau ít phút nhé!',
+        accentColor: THEME.AMBER_PULSE,
+        ephemeral: true,
+      })
+    );
     return;
   }
 
@@ -116,16 +116,15 @@ export async function handleInteractionCreate(interaction, context) {
       userId,
     ]);
     if (row?.is_banned) {
-      await safeReply(interaction, {
-        embeds: [
-          buildFeedbackEmbed({
-            color: COLORS.DANGER,
-            title: '⛔ Tài Khoản Đã Bị Khóa Khỏi Hệ Thống',
-            description: `Lý do: **${row.ban_reason || 'Vi phạm quy định chống gian lận'}**.`,
-          }),
-        ],
-        flags: MessageFlags.Ephemeral,
-      });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '⛔ Tài Khoản Đã Bị Khóa Khỏi Hệ Thống',
+          body: `Lý do: **${row.ban_reason || 'Vi phạm quy định chống gian lận'}**.`,
+          accentColor: THEME.CRIMSON_NEON,
+          ephemeral: true,
+        })
+      );
       return;
     }
   }
@@ -133,26 +132,30 @@ export async function handleInteractionCreate(interaction, context) {
   // 3. Bắt buộc 100% các trò chơi (cả lệnh lẫn nút bấm) chỉ hoạt động đúng kênh riêng đã cài đặt
   const channelErr = checkGameChannelRestriction(interaction, db);
   if (channelErr) {
-    await safeReply(interaction, {
-      embeds: [
-        buildFeedbackEmbed({
-          color: COLORS.WARNING,
-          title: '📍 Yêu Cầu Đúng Kênh Trò Chơi',
-          description: channelErr,
-        }),
-      ],
-      flags: MessageFlags.Ephemeral,
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '📍 Yêu Cầu Đúng Kênh Trò Chơi',
+        body: channelErr,
+        accentColor: THEME.AMBER_PULSE,
+        ephemeral: true,
+      })
+    );
     return;
   }
 
   // 4. Giới hạn tốc độ thao tác chống spam liên thanh (Rate Limit 650ms)
   const rl = globalGuard.checkRateLimit(userId, 650);
   if (!rl.allowed) {
-    await safeReply(interaction, {
-      content: '⏳ Bạn thao tác hơi nhanh! Vui lòng đợi khoảng **1 giây** giữa các lần bấm nhé.',
-      flags: MessageFlags.Ephemeral,
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '⏳ Thao Tác Quá Nhanh',
+        body: 'Vui lòng đợi khoảng **1 giây** giữa các lần bấm nút nhé!',
+        accentColor: THEME.AMBER_PULSE,
+        ephemeral: true,
+      })
+    );
     return;
   }
 
@@ -163,7 +166,6 @@ export async function handleInteractionCreate(interaction, context) {
       if (!command) return;
       await command.execute(interaction, context);
 
-      // Các bảng phòng đấu 2 người của Nối Từ tự quản lý vòng đời chỉnh sửa tại chỗ riêng
       const isLiveNoituRoomBoard =
         interaction.commandName === GAME_IDS.NOITU &&
         ['create', 'join', 'start', 'surrender'].includes(
@@ -186,10 +188,15 @@ export async function handleInteractionCreate(interaction, context) {
       LOG_CATEGORIES.ANTICHEAT,
       `Phát hiện xung đột thao tác đồng thời (Concurrent Click) từ <@${userId}> (\`${userId}\`). Hệ thống đã tự động chặn giao dịch trùng.`
     );
-    await safeReply(interaction, {
-      content: '🔒 Hệ thống đang xử lý thao tác trước đó của bạn, vui lòng chờ hoàn tất!',
-      flags: MessageFlags.Ephemeral,
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: '🔒 Đang Xử Lý Giao Dịch Trước Đó',
+        body: 'Hệ thống đang hoàn tất thao tác liền trước của bạn, vui lòng chờ giây lát!',
+        accentColor: THEME.AMBER_PULSE,
+        ephemeral: true,
+      })
+    );
   }
 }
 
@@ -217,29 +224,16 @@ export async function safeHandleInteraction(interaction, context) {
       );
     }
 
-    await safeReply(interaction, {
-      embeds: [
-        buildFeedbackEmbed({
-          color: isSystemBug ? COLORS.DANGER : COLORS.WARNING,
-          title: isSystemBug ? '⚠️ Đã Xảy Ra Sự Cố Hệ Thống' : '💡 Thông Báo Hệ Thống',
-          description: isSystemBug
-            ? 'Yêu cầu chưa thể thực hiện lúc này. Hệ thống đã ghi nhận để khắc phục.'
-            : cleanMsg.slice(0, 1500),
-        }),
-      ],
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-}
-
-async function safeReply(interaction, payload) {
-  try {
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(payload);
-    } else {
-      await interaction.reply(payload);
-    }
-  } catch {
-    // Bỏ qua nếu token tương tác của Discord đã quá hạn 3 giây
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: isSystemBug ? '⚠️ Đã Xảy Ra Sự Cố Hệ Thống' : '💡 Thông Báo Hệ Thống',
+        body: isSystemBug
+          ? 'Yêu cầu chưa thể thực hiện lúc này. Hệ thống đã ghi nhận để khắc phục.'
+          : cleanMsg.slice(0, 1500),
+        accentColor: isSystemBug ? THEME.CRIMSON_NEON : THEME.AMBER_PULSE,
+        ephemeral: true,
+      })
+    );
   }
 }

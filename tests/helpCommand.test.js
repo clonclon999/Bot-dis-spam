@@ -9,8 +9,9 @@ import {
   routeComponentInteraction,
 } from '../src/commands/index.js';
 import { createBotSystems } from '../src/systems/index.js';
+import { extractCv2Text, validateCv2Payload } from '../src/ui/componentsV2.js';
 
-describe('Slash Command /help, /menu & Central 38-Command Registry', () => {
+describe('Slash Command /help, /menu & Central 38-Command Registry (Components V2)', () => {
   it('đăng ký đầy đủ 38 Slash Commands chuẩn giới hạn Discord API (bao gồm /games & /noitu)', () => {
     const allJson = getSlashCommandsJSON();
     assert.equal(allJson.length, 38);
@@ -26,7 +27,7 @@ describe('Slash Command /help, /menu & Central 38-Command Registry', () => {
     }
   });
 
-  it('hiển thị 6 danh mục /help không bị trùng emoji 🏠 và điều hướng tại chỗ trên /menu', async () => {
+  it('hiển thị 6 danh mục /help không bị trùng emoji 🏠 và điều hướng tại chỗ trên /menu bằng Components V2', async () => {
     const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'gamebot-help-'));
     try {
       const systems = await createBotSystems(tmpDir);
@@ -40,12 +41,17 @@ describe('Slash Command /help, /menu & Central 38-Command Registry', () => {
             lastReply = p;
           },
         });
-        assert.match(lastReply.embeds[0].data.title, /GAMES/);
-        // Kiểm tra SelectMenu option đầu tiên không bị lặp emoji 🏠 trong label
-        const firstOptLabel = lastReply.components[0].components[0].options[0].data.label;
-        assert.equal(firstOptLabel, 'Tổng Quan Hệ Thống');
+        assert.equal(validateCv2Payload(lastReply).valid, true);
+        assert.match(extractCv2Text(lastReply), /GAMES/);
 
-        // Chuyển danh mục ngay trên cùng Embed bằng Select Menu
+        // Kiểm tra SelectMenu option đầu tiên bên trong Container V2 không bị lặp emoji 🏠 trong label
+        const containerJson = lastReply.components[0].toJSON();
+        const selectRow = containerJson.components.find(
+          (c) => c.type === 1 && c.components?.[0]?.type === 3
+        );
+        assert.equal(selectRow.components[0].options[0].label, 'Tổng Quan Hệ Thống');
+
+        // Chuyển danh mục ngay trên cùng Container V2 bằng Select Menu
         let updatedPayload = null;
         const handled = await routeComponentInteraction(
           {
@@ -60,9 +66,10 @@ describe('Slash Command /help, /menu & Central 38-Command Registry', () => {
           systems
         );
         assert.equal(handled, true);
-        assert.match(updatedPayload.embeds[0].data.title, /ECONOMY/);
+        assert.equal(validateCv2Payload(updatedPayload).valid, true);
+        assert.match(extractCv2Text(updatedPayload), /ECONOMY/);
 
-        // Kiểm tra /menu chuyển sang Hướng dẫn & quay lại Menu ngay trên cùng 1 tin nhắn
+        // Kiểm tra /menu chuyển sang Hướng dẫn & quay lại Menu ngay trên cùng 1 tin nhắn V2
         let inPlaceView = null;
         await routeComponentInteraction(
           {
@@ -78,7 +85,8 @@ describe('Slash Command /help, /menu & Central 38-Command Registry', () => {
           },
           systems
         );
-        assert.match(inPlaceView.embeds[0].data.title, /TRUNG TÂM HƯỚNG DẪN/);
+        assert.equal(validateCv2Payload(inPlaceView).valid, true);
+        assert.match(extractCv2Text(inPlaceView), /TRUNG TÂM HƯỚNG DẪN/);
 
         let backToMenu = null;
         await routeComponentInteraction(
@@ -95,7 +103,8 @@ describe('Slash Command /help, /menu & Central 38-Command Registry', () => {
           },
           systems
         );
-        assert.match(backToMenu.embeds[0].data.author.name, /Trung Tâm Điều Khiển Nhanh/);
+        assert.equal(validateCv2Payload(backToMenu).valid, true);
+        assert.match(extractCv2Text(backToMenu), /Trung Tâm Điều Khiển Nhanh/);
       } finally {
         await systems.db.close();
       }

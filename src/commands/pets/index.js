@@ -1,7 +1,9 @@
-import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder } from 'discord.js';
 import { PET_SPECIES } from '../../config/constants.js';
-import { COLORS } from '../../utils/embeds.js';
-import { formatVnd, renderProgressBar } from '../../utils/format.js';
+import { buildCv2NoticePayload } from '../../ui/componentsV2.js';
+import { safeReplyV2 } from '../../ui/interactionHelpers.js';
+import { renderNeonBar, THEME } from '../../ui/theme.js';
+import { formatVnd } from '../../utils/format.js';
 
 const BUYABLE_SPECIES = Object.values(PET_SPECIES)
   .filter((p) => !p.boxOnly)
@@ -13,7 +15,7 @@ const BUYABLE_SPECIES = Object.values(PET_SPECIES)
 export const petCommand = {
   data: new SlashCommandBuilder()
     .setName('pet')
-    .setDescription('Hệ thống nuôi Thú Cưng, cho ăn, nâng cấp và bộ sưu tập thú hiếm')
+    .setDescription('Hệ thống nuôi Thú Cưng, cho ăn, nâng cấp và bộ sưu tập thú hiếm (Components V2)')
     .addSubcommand((s) =>
       s.setName('shop').setDescription('Xem danh sách các loài thú cưng và chỉ số Bonus')
     )
@@ -89,16 +91,16 @@ export const petCommand = {
         );
       });
 
-      const embed = new EmbedBuilder()
-        .setColor(COLORS.PRIMARY)
-        .setTitle('🐾 Trại Thú Cưng & Linh Thú Huyền Thoại')
-        .setDescription(
-          lines.join('\n\n') +
-            '\n\n*(Lưu ý: Bonus thú cưng chỉ hỗ trợ cày EXP và Nhiệm vụ, đảm bảo các trò chơi 100% công bằng).* '
-        )
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '🐾 Trại Thú Cưng & Linh Thú Huyền Thoại',
+          body:
+            lines.join('\n\n') +
+            '\n\n*(Lưu ý: Bonus thú cưng chỉ hỗ trợ cày EXP và Nhiệm vụ, đảm bảo các trò chơi 100% công bằng).*',
+          accentColor: THEME.NEON_PURPLE,
+        })
+      );
       return;
     }
 
@@ -107,81 +109,83 @@ export const petCommand = {
       const nickname = interaction.options.getString('nickname');
       const res = petSystem.buyPet(uid, uname, speciesId, nickname);
 
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(COLORS.SUCCESS)
-            .setTitle('🎉 Nhận Nuôi Thú Cưng Thành Công!')
-            .setDescription(
-              `Chào mừng ${res.species.emoji} **${res.pet.nickname}** (ID: \`#${res.pet.id}\`) về đội của bạn!\n` +
-                `💵 Số dư ví còn lại: **${formatVnd(res.balanceAfter)}**`
-            ),
-        ],
-      });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '🎉 Nhận Nuôi Thú Cưng Thành Công!',
+          body:
+            `Chào mừng ${res.species.emoji} **${res.pet.nickname}** (ID: \`#${res.pet.id}\`) về đội của bạn!\n` +
+            `💵 Số dư ví còn lại: **${formatVnd(res.balanceAfter)}**`,
+          accentColor: THEME.CYBER_EMERALD,
+        })
+      );
       return;
     }
 
     if (sub === 'info') {
       const active = petSystem.getActivePetBonuses(uid);
       if (!active.pet) {
-        await interaction.reply({
-          content: '🐾 Bạn chưa sở hữu hoặc chưa trang bị thú cưng nào! Hãy xem `/pet shop`.',
-        });
+        await safeReplyV2(
+          interaction,
+          buildCv2NoticePayload({
+            title: '🐾 Chưa Trang Bị Thú Cưng',
+            body: 'Bạn chưa sở hữu hoặc chưa trang bị thú cưng nào! Hãy ghé thăm `/pet shop`.',
+            accentColor: THEME.AMBER_PULSE,
+          })
+        );
         return;
       }
 
       const p = active.pet;
       const reqExp = p.level * 100;
-      const embed = new EmbedBuilder()
-        .setColor(COLORS.INFO)
-        .setTitle(`${active.species.emoji} ${p.nickname} (ID #${p.id}) — Lv.${p.level}`)
-        .addFields(
-          { name: '🧬 Loài & Độ hiếm', value: `${active.species.name} (\`${active.species.rarity}\`)`, inline: true },
-          { name: '🍖 Độ no hiện tại', value: `${renderProgressBar(p.currentHunger, 100, 6)} (${p.currentHunger}/100)`, inline: true },
-          { name: '📈 Tiến độ cấp thú', value: `${p.exp}/${reqExp} EXP`, inline: true },
-          {
-            name: '✨ Hiệu ứng & Bonus đang kích hoạt',
-            value: `• Cộng EXP: **+${active.expBonusPct}%**\n• Cộng thưởng Nhiệm vụ/Đi làm: **+${active.questBonusPct}%**\n• Hiệu ứng hồ sơ: **${active.effectLabel}**`,
-          }
-        )
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: `${active.species.emoji} ${p.nickname} (ID #${p.id}) — Lv.${p.level}`,
+          body:
+            `• 🧬 **Loài & Độ hiếm:** ${active.species.name} (\`${active.species.rarity}\`)\n` +
+            `• 🍖 **Độ no hiện tại:** \`${renderNeonBar(p.currentHunger, 100, 8)}\` (**${p.currentHunger}/100**)\n` +
+            `• 📈 **Tiến độ cấp thú:** \`${p.exp}/${reqExp} EXP\`\n\n` +
+            `### ✨ Hiệu Ứng & Bonus Đang Kích Hoạt\n` +
+            `• Cộng EXP: **+${active.expBonusPct}%**\n` +
+            `• Cộng thưởng Nhiệm vụ/Đi làm: **+${active.questBonusPct}%**\n` +
+            `• Hiệu ứng hồ sơ: **${active.effectLabel}**`,
+          accentColor: THEME.NEON_CYAN,
+        })
+      );
       return;
     }
 
     if (sub === 'feed') {
       const petId = interaction.options.getInteger('pet_id');
       const res = petSystem.feedPet(uid, uname, petId);
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(COLORS.SUCCESS)
-            .setTitle('🍖 Cho Thú Cưng Ăn Thành Công!')
-            .setDescription(
-              `${res.species.emoji} **${res.pet.nickname}** rất thích bữa ăn này!\n` +
-                `• Nguồn thức ăn: ${res.usedBagFood ? 'Túi đồ (1x 🍖 Thức Ăn)' : `Mua nhanh (-${formatVnd(res.foodCost)})`}\n` +
-                `• Độ no hiện tại: **${res.pet.hunger}/100** | Cấp độ: **Lv.${res.pet.level}** ${res.leveledUp ? '🎉 *(Vừa lên cấp!)*' : ''}`
-            ),
-        ],
-      });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '🍖 Cho Thú Cưng Ăn Thành Công!',
+          body:
+            `${res.species.emoji} **${res.pet.nickname}** rất thích bữa ăn này!\n` +
+            `• Nguồn thức ăn: ${res.usedBagFood ? 'Túi đồ (1x 🍖 Thức Ăn)' : `Mua nhanh (-${formatVnd(res.foodCost)})`}\n` +
+            `• Độ no hiện tại: **${res.pet.hunger}/100** | Cấp độ: **Lv.${res.pet.level}** ${res.leveledUp ? '🎉 *(Vừa lên cấp!)*' : ''}`,
+          accentColor: THEME.CYBER_EMERALD,
+        })
+      );
       return;
     }
 
     if (sub === 'upgrade') {
       const petId = interaction.options.getInteger('pet_id');
       const res = petSystem.upgradePet(uid, uname, petId);
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(COLORS.SUCCESS)
-            .setTitle('⬆️ Huấn Luyện Thú Cưng Lên Cấp!')
-            .setDescription(
-              `${res.species.emoji} **${res.pet.nickname}** đã thăng lên **Cấp ${res.pet.level}** (-${formatVnd(res.cost)})!\n` +
-                `💵 Ví còn lại: **${formatVnd(res.balanceAfter)}**`
-            ),
-        ],
-      });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '⬆️ Huấn Luyện Thú Cưng Lên Cấp!',
+          body:
+            `${res.species.emoji} **${res.pet.nickname}** đã thăng lên **Cấp ${res.pet.level}** (-${formatVnd(res.cost)})!\n` +
+            `💵 Ví còn lại: **${formatVnd(res.balanceAfter)}**`,
+          accentColor: THEME.CYBER_EMERALD,
+        })
+      );
       return;
     }
 
@@ -189,34 +193,31 @@ export const petCommand = {
       const petId = interaction.options.getInteger('pet_id', true);
       const name = interaction.options.getString('name', true);
       const updated = petSystem.renamePet(uid, petId, name);
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(COLORS.SUCCESS)
-            .setTitle('✏️ Đổi Tên Thú Cưng Thành Công')
-            .setDescription(`Thú cưng \`#${updated.id}\` từ nay mang tên **${updated.nickname}**!`),
-        ],
-      });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '✏️ Đổi Tên Thú Cưng Thành Công',
+          body: `Thú cưng \`#${updated.id}\` từ nay mang tên **${updated.nickname}**!`,
+          accentColor: THEME.NEON_CYAN,
+        })
+      );
       return;
     }
 
     if (sub === 'equip') {
       const petId = interaction.options.getInteger('pet_id', true);
       const equipped = petSystem.equipPet(uid, petId);
-      await interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(COLORS.SUCCESS)
-            .setTitle('🐾 Đã Chọn Thú Cưng Đồng Hành')
-            .setDescription(
-              `${equipped.species?.emoji ?? '🐾'} **${equipped.nickname}** (Lv.${equipped.level}) hiện đang đồng hành cùng bạn!`
-            ),
-        ],
-      });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '🐾 Đã Chọn Thú Cưng Đồng Hành',
+          body: `${equipped.species?.emoji ?? '🐾'} **${equipped.nickname}** (Lv.${equipped.level}) hiện đang đồng hành cùng bạn!`,
+          accentColor: THEME.CYBER_EMERALD,
+        })
+      );
       return;
     }
 
-    // collection
     const target = interaction.options.getUser('user') ?? interaction.user;
     const list = petSystem.getUserPets(target.id);
     const lines =
@@ -227,14 +228,14 @@ export const petCommand = {
           )
         : ['*Chưa sở hữu thú cưng nào.*'];
 
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLORS.PRIMARY)
-          .setTitle(`📚 Bộ Sưu Tập Thú Cưng — ${target.username} (${list.length} cá thể)`)
-          .setDescription(lines.join('\n')),
-      ],
-    });
+    await safeReplyV2(
+      interaction,
+      buildCv2NoticePayload({
+        title: `📚 Bộ Sưu Tập Thú Cưng — ${target.username} (${list.length} cá thể)`,
+        body: lines.join('\n'),
+        accentColor: THEME.NEON_PURPLE,
+      })
+    );
   },
 };
 

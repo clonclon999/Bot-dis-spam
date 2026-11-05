@@ -169,68 +169,100 @@ def draw_die_face(draw: ImageDraw.ImageDraw, x: int, y: int, size: int, val: int
 # ==============================================================================
 
 def generate_banners():
-    # Game Center Banner (900x340)
-    gc = make_gradient(900, 340, (18, 16, 52), (46, 20, 88))
-    draw_glow_frame(gc, (241, 196, 15), 4)
+    # Game Center PRO MAX Banner (900x340 — Dark Mode + Neon Cyan & Purple)
+    gc = make_gradient(900, 340, (10, 14, 28), (28, 12, 54))
+    draw_glow_frame(gc, (0, 245, 212), 4)
     d = ImageDraw.Draw(gc)
-    centered_text(d, 450, 68, "DISCORD GAME BOT PRO", get_font(40), (241, 196, 15))
-    centered_text(d, 450, 118, "TRUNG TÂM TRÒ CHƠI TƯƠNG TÁC TRỰC QUAN • CƯỢC VNĐ", get_font(21), (236, 240, 241))
+    d.rounded_rectangle([24, 24, 876, 316], radius=14, outline=(155, 93, 229), width=2)
+    centered_text(d, 450, 64, "GAME CENTER PRO MAX", get_font(40), (0, 245, 212))
+    centered_text(d, 450, 114, "DISCORD COMPONENTS V2 • HỆ SINH THÁI 7 GAME & KINH TẾ VNĐ", get_font(19), (230, 236, 255))
 
     badges = ["BẦU CUA", "TÀI XỈU", "NỐI TỪ", "OẲN TÙ TÌ", "ĐOÁN SỐ", "ĐỒNG XU", "ĐUA THÚ"]
-    colors = [(230, 126, 34), (231, 76, 60), (46, 204, 113), (155, 89, 182), (52, 152, 219), (241, 196, 15), (26, 188, 156)]
+    colors = [
+        (0, 245, 212),
+        (155, 93, 229),
+        (0, 229, 255),
+        (199, 125, 255),
+        (56, 189, 248),
+        (255, 209, 102),
+        (52, 211, 153),
+    ]
     bw = 108
     gap = 12
     start_x = (900 - (len(badges) * bw + (len(badges) - 1) * gap)) // 2
     for idx, (label, col) in enumerate(zip(badges, colors)):
         bx = start_x + idx * (bw + gap)
-        by = 175
-        d.rounded_rectangle([bx, by, bx + bw, by + 95], radius=14, fill=(28, 32, 68), outline=col, width=3)
+        by = 166
+        d.rounded_rectangle([bx, by, bx + bw, by + 98], radius=14, fill=(16, 20, 42), outline=col, width=3)
         d.ellipse([bx + 36, by + 14, bx + 72, by + 50], fill=col)
-        centered_text(d, bx + bw // 2, by + 32, str(idx + 1), get_font(20), (15, 15, 25), shadow=None)
-        centered_text(d, bx + bw // 2, by + 72, label, get_font(14), (255, 255, 255), shadow=None)
+        centered_text(d, bx + bw // 2, by + 32, str(idx + 1), get_font(20), (10, 12, 24), shadow=None)
+        centered_text(d, bx + bw // 2, by + 74, label, get_font(14), (245, 248, 255), shadow=None)
 
-    centered_text(d, 450, 302, "CHỌN TRÒ CHƠI BÊN DƯỚI ĐỂ THAM GIA NGAY • CÔNG BẰNG 100%", get_font(16, False), (174, 214, 241))
+    centered_text(d, 450, 296, "DARK GAMING UI • 100% NGẪU NHIÊN CÔNG BẰNG • TỐI ƯU MOBILE & DESKTOP", get_font(15, False), (165, 243, 252))
     save_png(gc, "banners/game_center.png")
 
     # Victory Banner (800x250)
-    vic = make_gradient(800, 250, (20, 75, 48), (12, 42, 30))
-    draw_glow_frame(vic, (241, 196, 15), 4)
+    vic = make_gradient(800, 250, (10, 48, 42), (16, 20, 44))
+    draw_glow_frame(vic, (0, 245, 212), 4)
     dv = ImageDraw.Draw(vic)
-    # Cúp vàng
-    dv.polygon([(365, 42), (435, 42), (422, 102), (378, 102)], fill=(241, 196, 15), outline=(255, 235, 130), width=3)
+    dv.polygon([(365, 42), (435, 42), (422, 102), (378, 102)], fill=(255, 209, 102), outline=(0, 245, 212), width=3)
     dv.rectangle([392, 102, 408, 122], fill=(212, 172, 13))
-    dv.rectangle([372, 122, 428, 134], fill=(241, 196, 15))
-    centered_text(dv, 400, 168, "CHIẾN THẮNG RỰC RỠ!", get_font(36), (241, 196, 15))
-    centered_text(dv, 400, 210, "TIỀN THƯỞNG VNĐ ĐÃ CỘNG TRỰC TIẾP VÀO VÍ CỦA BẠN", get_font(17, False), (213, 245, 227))
+    dv.rectangle([372, 122, 428, 134], fill=(255, 209, 102))
+    centered_text(dv, 400, 168, "CHIẾN THẮNG RỰC RỠ!", get_font(36), (0, 245, 212))
+    centered_text(dv, 400, 210, "TIỀN THƯỞNG VNĐ ĐÃ CỘNG TRỰC TIẾP VÀO VÍ CỦA BẠN", get_font(17, False), (224, 242, 254))
     save_png(vic, "banners/victory.png")
 
     # Defeat Banner (800x250)
-    lose = make_gradient(800, 250, (72, 22, 32), (32, 16, 28))
-    draw_glow_frame(lose, (231, 76, 60), 4)
+    lose = make_gradient(800, 250, (48, 14, 34), (16, 12, 32))
+    draw_glow_frame(lose, (255, 51, 102), 4)
     dl = ImageDraw.Draw(lose)
-    dl.ellipse([370, 42, 430, 102], fill=(192, 57, 43), outline=(245, 183, 177), width=3)
+    dl.ellipse([370, 42, 430, 102], fill=(255, 51, 102), outline=(199, 125, 255), width=3)
     centered_text(dl, 400, 72, "!", get_font(40), (255, 255, 255), shadow=None)
-    centered_text(dl, 400, 158, "RẤT TIẾC — CHƯA TRÚNG LƯỢT NÀY!", get_font(31), (245, 183, 177))
-    centered_text(dl, 400, 204, "CHÚC BẠN BÙNG NỔ MAY MẮN Ở VÁN TIẾP THEO", get_font(17, False), (235, 222, 240))
+    centered_text(dl, 400, 158, "CHƯA TRÚNG LƯỢT NÀY!", get_font(32), (255, 143, 171))
+    centered_text(dl, 400, 204, "PHỤC THÙ NGAY Ở VÁN TIẾP THEO • CHÚC BẠN ĐẠI THẮNG", get_font(17, False), (235, 222, 255))
     save_png(lose, "banners/defeat.png")
 
     # Quest Banner (840x240)
-    qb = make_gradient(840, 240, (24, 52, 96), (16, 28, 62))
-    draw_glow_frame(qb, (93, 173, 226), 4)
+    qb = make_gradient(840, 240, (12, 22, 48), (28, 14, 56))
+    draw_glow_frame(qb, (0, 245, 212), 4)
     dq = ImageDraw.Draw(qb)
-    centered_text(dq, 420, 86, "BẢNG NHIỆM VỤ HẰNG NGÀY & HẰNG TUẦN", get_font(31), (241, 196, 15))
-    centered_text(dq, 420, 138, "HOÀN THÀNH CHỈ TIÊU 7 TRÒ CHƠI • NHẬN THƯỞNG VNĐ & EXP", get_font(18, False), (214, 234, 248))
-    dq.rounded_rectangle([220, 172, 620, 198], radius=12, fill=(20, 35, 65), outline=(93, 173, 226), width=2)
-    dq.rounded_rectangle([224, 176, 510, 194], radius=10, fill=(46, 204, 113))
+    centered_text(dq, 420, 82, "TRUNG TÂM NHIỆM VỤ PRO MAX", get_font(32), (0, 245, 212))
+    centered_text(dq, 420, 134, "9 NHIỆM VỤ NGÀY • 4 NHIỆM VỤ TUẦN • NHẬN VNĐ & EXP TỨC THÌ", get_font(17, False), (224, 231, 255))
+    dq.rounded_rectangle([200, 170, 640, 198], radius=12, fill=(18, 24, 48), outline=(155, 93, 229), width=2)
+    dq.rounded_rectangle([204, 174, 535, 194], radius=10, fill=(0, 245, 212))
     save_png(qb, "banners/quest_banner.png")
 
     # Shop Banner (840x240)
-    sb = make_gradient(840, 240, (74, 35, 90), (28, 20, 56))
-    draw_glow_frame(sb, (244, 208, 63), 4)
+    sb = make_gradient(840, 240, (28, 12, 54), (12, 18, 40))
+    draw_glow_frame(sb, (155, 93, 229), 4)
     ds = ImageDraw.Draw(sb)
-    centered_text(ds, 420, 88, "CỬA HÀNG VẬT PHẨM & HỘP QUÀ BÍ ẨN", get_font(32), (244, 208, 63))
-    centered_text(ds, 420, 142, "VÉ MAY MẮN • THẺ X2 EXP • BẢO HIỂM • THÚ CƯNG • KHUNG & DANH HIỆU", get_font(17, False), (235, 222, 240))
+    centered_text(ds, 420, 86, "CỬA HÀNG CYBER & HỘP QUÀ BÍ ẨN", get_font(32), (199, 125, 255))
+    centered_text(ds, 420, 140, "VÉ MAY MẮN • THẺ X2 EXP • BẢO HIỂM • TRỨNG THÚ CƯNG • KHUNG VIP", get_font(16, False), (165, 243, 252))
     save_png(sb, "banners/shop_banner.png")
+
+    # Wallet Banner (840x220)
+    wb = make_gradient(840, 220, (10, 26, 42), (24, 14, 48))
+    draw_glow_frame(wb, (0, 245, 212), 4)
+    dw = ImageDraw.Draw(wb)
+    centered_text(dw, 420, 78, "VÍ ĐIỆN TỬ & NGÂN HÀNG VNĐ", get_font(32), (0, 245, 212))
+    centered_text(dw, 420, 132, "QUẢN LÝ TIỀN MẶT • TIẾT KIỆM SINH LÃI TỰ ĐỘNG • ĐIỂM DANH NHANH", get_font(16, False), (224, 231, 255))
+    save_png(wb, "banners/wallet_banner.png")
+
+    # Profile Banner (840x220)
+    pb = make_gradient(840, 220, (24, 12, 52), (10, 22, 44))
+    draw_glow_frame(pb, (155, 93, 229), 4)
+    dp = ImageDraw.Draw(pb)
+    centered_text(dp, 420, 78, "HỒ SƠ CHIẾN BINH & DANH HIỆU", get_font(32), (199, 125, 255))
+    centered_text(dp, 420, 132, "CẤP ĐỘ EXP • THÚ CƯNG ĐỒNG HÀNH • HUY HIỆU & BUFF ĐANG BẬT", get_font(16, False), (165, 243, 252))
+    save_png(pb, "banners/profile_banner.png")
+
+    # Leaderboard Banner (840x220)
+    lb = make_gradient(840, 220, (14, 18, 46), (34, 14, 58))
+    draw_glow_frame(lb, (255, 209, 102), 4)
+    dlb = ImageDraw.Draw(lb)
+    centered_text(dlb, 420, 78, "BẢNG VÀNG XẾP HẠNG SERVER", get_font(32), (255, 209, 102))
+    centered_text(dlb, 420, 132, "TOP ĐẠI GIA VNĐ • TOP CẤP ĐỘ • TOP THẮNG GAME • TOP NỐI TỪ", get_font(16, False), (0, 245, 212))
+    save_png(lb, "banners/leaderboard_banner.png")
 
 
 # ==============================================================================

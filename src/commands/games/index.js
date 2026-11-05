@@ -2,9 +2,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   InteractionContextType,
-  MessageFlags,
   ModalBuilder,
   SlashCommandBuilder,
   TextInputBuilder,
@@ -17,13 +15,35 @@ import {
   RACE_ANIMALS,
   RPS_CHOICES,
 } from '../../config/constants.js';
+import { globalAnimationManager } from '../../ui/animationManager.js';
+import {
+  buildCv2NoticePayload,
+  buildCv2Payload,
+  createContainer,
+  mediaGallery,
+  sectionWithButton,
+  sectionWithThumbnail,
+  separator,
+  textDisplay,
+} from '../../ui/componentsV2.js';
+import {
+  safeClosePanel,
+  safeDeferUpdate,
+  safeReplyV2,
+  safeUpdateV2,
+  verifyPanelOwner,
+} from '../../ui/interactionHelpers.js';
+import { renderAttemptHearts, renderNeonBar, THEME } from '../../ui/theme.js';
 import {
   ASSET_PATHS,
   buildAssetAttachment,
-  buildBauCuaResultAttachment,
-  buildThreeDiceResultAttachment,
+  buildBauCuaMascotGalleryAssets,
+  buildBauCuaRollGalleryAssets,
+  buildDiceGalleryAssets,
+  buildRaceRosterGalleryAssets,
+  buildRpsChoicesGalleryAssets,
+  buildRpsDuelGalleryAssets,
 } from '../../utils/assetRegistry.js';
-import { COLORS, errorEmbed } from '../../utils/embeds.js';
 import { formatNumber, formatVnd } from '../../utils/format.js';
 import {
   buildCustomBetModal,
@@ -33,7 +53,10 @@ import {
   computeAllInAmount,
   formatBettingSummaryBlock,
   getBettingDraft,
+  getLastBauCuaStakes,
+  inspectBettingDraft,
   runWithConfirmLock,
+  saveLastBauCuaStakes,
   upsertBettingDraft,
 } from './bettingPanel.js';
 import {
@@ -49,8 +72,6 @@ import {
 } from './noitu.js';
 
 export { registerNoituUiHooks };
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Bộ nhớ thách đấu Oẳn Tù Tì PvP có TTL chống rò rỉ bộ nhớ
 const rpsChallenges = new Map();
@@ -71,7 +92,7 @@ async function sendPanelReply(interaction, ctx, payload) {
   if (typeof ctx?.sendPanel === 'function') {
     await ctx.sendPanel(interaction, payload);
   } else {
-    await interaction.reply(payload);
+    await safeReplyV2(interaction, payload);
   }
 }
 
@@ -88,8 +109,31 @@ function parseCleanAmount(raw) {
   return Number.parseInt(cleaned, 10);
 }
 
+function makeEditAdapter(interaction) {
+  return async (payload) => {
+    const normalized = {
+      ...payload,
+      ...(payload.files && payload.files.length > 0 ? {} : { attachments: [] }),
+    };
+    if (interaction.deferred || interaction.replied) {
+      if (typeof interaction.editReply === 'function') {
+        return interaction.editReply(normalized);
+      }
+    }
+    if (typeof interaction.update === 'function') {
+      const res = await interaction.update(normalized);
+      interaction.replied = true;
+      return res;
+    }
+    if (typeof interaction.editReply === 'function') {
+      return interaction.editReply(normalized);
+    }
+    return null;
+  };
+}
+
 // ============================================================================
-// 1. ƯU TIÊN SỐ 1: BẦU CUA – GIAO DIỆN LƯỚI 6 LINH VẬT & ĐẶT RIÊNG TỪNG CỬA
+// 1. ƯU TIÊN SỐ 1: BẦU CUA PRO MAX (COMPONENTS V2 – LƯỚI 6 LINH VẬT & TỪNG CỬA)
 // ============================================================================
 
 function parseMascotCustomInput(rawInput, currentMascotBets) {
@@ -103,7 +147,6 @@ function parseMascotCustomInput(rawInput, currentMascotBets) {
     nai: 'nai',
   };
 
-  // Trường hợp người dùng chỉ gõ 1 con số (VD: "5000") -> đổi mệnh giá chip & cập nhật các cửa đã chọn
   const singleNum = parseCleanAmount(raw);
   if (Number.isSafeInteger(singleNum) && singleNum > 0) {
     const nextBets = { ...currentMascotBets };
@@ -114,12 +157,14 @@ function parseMascotCustomInput(rawInput, currentMascotBets) {
     return { activeChip: singleNum, mascotBets: nextBets };
   }
 
-  // Trường hợp gõ từng cửa riêng biệt: "bau 5000, cua 10000, tom=2000"
   const nextBets = { ...currentMascotBets };
   let matched = 0;
   const segments = raw.split(/[,;\n]+/);
   for (const seg of segments) {
-    const m = seg.trim().toLowerCase().match(/^([a-záàảãạăằắẳẵặâầấẩẫậđèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ]+)\s*[:=\s]\s*([\d.,_]+)$/i);
+    const m = seg
+      .trim()
+      .toLowerCase()
+      .match(/^([a-záàảãạăằắẳẵặâầấẩẫậđèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ]+)\s*[:=\s]\s*([\d.,_]+)$/i);
     if (!m) continue;
     const mascotId = aliasMap[m[1]];
     const amt = parseCleanAmount(m[2]);
@@ -130,12 +175,12 @@ function parseMascotCustomInput(rawInput, currentMascotBets) {
     }
   }
   if (matched === 0) {
-    throw new Error('Định dạng chưa hợp lệ! Nhập số tiền (VD: `5000`) hoặc đặt riêng từng cửa (VD: `bau 5000, cua 10000`).');
+    throw new Error('Định dạng chưa hợp lệ! Nhập số tiền (VD: `5000`) hoặc từng cửa (VD: `bau 5000, cua 10000`).');
   }
   return { mascotBets: nextBets };
 }
 
-export function buildBauCuaBoardPayload(user, systems) {
+export function buildBauCuaBoardPayload(user, systems, { ephemeral = false } = {}) {
   systems.gameSystem.touchActivePlayer(GAME_IDS.BAUCUA, user.id);
   const wallet = systems.economySystem.ensureUser(user.id, user.username).wallet;
   const { minBet, maxBet } = getBetBounds(systems.db);
@@ -151,169 +196,209 @@ export function buildBauCuaBoardPayload(user, systems) {
   const projectedBalance = wallet - totalBet;
   const canConfirm = totalBet >= minBet && totalBet <= maxBet && wallet >= totalBet;
 
-  const gridArt = buildAssetAttachment(ASSET_PATHS.BAUCUA_GRID, 'baucua_grid.png');
+  // Bảng 6 linh vật có hình ảnh sắc nét (lưới 3x2 native MediaGallery của Discord Components V2)
+  const mascotGallery = buildBauCuaMascotGalleryAssets(mascotBets);
 
-  const embed = new EmbedBuilder()
-    .setColor(COLORS.GOLD)
-    .setTitle('🦀 BẦU CUA TÔM CÁ PRO – BÀN CƯỢC HÌNH ẢNH 6 LINH VẬT')
-    .setDescription(
-      [
-        `👤 **Người chơi:** <@${user.id}>`,
-        `💰 **Số dư ví hiện tại:** \`${formatVnd(wallet)}\``,
-        `📏 **Giới hạn mỗi cửa / tổng cược:** \`${formatVnd(minBet)}\` → \`${formatVnd(maxBet)}\``,
-        `🪙 **Mệnh giá phỉnh đang cầm:** **${formatVnd(activeChip)}** *(Bấm linh vật để cộng phỉnh này vào cửa đó)*`,
-        '',
-        '📋 **Danh sách linh vật đã chọn:**',
-        chosenLines.length > 0 ? chosenLines.join('\n') : '*(Chưa chọn linh vật — hãy bấm vào các ô linh vật bên dưới)*',
-        '',
-        `💵 **Tổng tiền cược:** **${formatVnd(totalBet)}**`,
-        `🏦 **Số dư dự kiến sau cược:** \`${projectedBalance >= 0 ? formatVnd(projectedBalance) : 'Vượt số dư hiện có!'}\``,
-        '*Thanh toán: Trúng 1 nháy nhận **2x** • 2 nháy nhận **3x** • 3 nháy nhận **4x** • Trượt mất tiền cược.*',
-      ].join('\n')
-    )
-    .setImage(gridArt.url)
-    .setFooter({ text: 'Chỉ trừ VNĐ sau khi bạn bấm "✅ Xác nhận" • Có thể đặt tiền riêng từng linh vật' })
-    .setTimestamp();
+  const stakeLedgerSection = sectionWithButton({
+    texts: [
+      `📋 **Bảng Tổng Cược Đã Chọn:**\n` +
+        (chosenLines.length > 0
+          ? chosenLines.join('\n')
+          : '*(Chưa chọn cửa — chạm vào các nút linh vật bên dưới để đặt phỉnh)*'),
+      `💰 **Ví:** \`${formatVnd(wallet)}\` • 🪙 **Phỉnh đang cầm:** \`${formatVnd(activeChip)}\`\n` +
+        `💵 **Tổng tiền cược:** **${formatVnd(totalBet)}** ➔ 🏦 **Sau cược:** \`${projectedBalance >= 0 ? formatVnd(projectedBalance) : 'Vượt số dư!'}\``,
+    ],
+    button: new ButtonBuilder()
+      .setCustomId(`vgame:baucua:clear:${user.id}`)
+      .setLabel('Xóa chọn')
+      .setEmoji('🧹')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(totalBet === 0),
+  });
+
+  const boardContainer = createContainer({
+    accentColor: THEME.NEON_CYAN,
+    children: [
+      textDisplay(
+        `## 🦀 SÒNG BẦU CUA HOÀNG GIA — BẢNG 6 LINH VẬT\n` +
+          `-# 👤 <@${user.id}> • Giới hạn \`${formatNumber(minBet)} – ${formatNumber(maxBet)} VNĐ\` • Trả thưởng: **1 nháy = 2x • 2 nháy = 3x • 3 nháy = 4x**`
+      ),
+      mediaGallery(mascotGallery.items),
+      separator(),
+      stakeLedgerSection,
+    ],
+  });
 
   const makeMascotBtn = (m) => {
     const amt = mascotBets[m.id] || 0;
     return new ButtonBuilder()
       .setCustomId(`vgame:baucua:pick:${user.id}:${m.id}`)
-      .setLabel(amt > 0 ? `${m.emoji} ${m.name} (${formatNumber(amt)} ₫)` : `${m.emoji} ${m.name}`)
+      .setEmoji(m.emoji)
+      .setLabel(amt > 0 ? `${m.name} (${formatNumber(amt)} ₫)` : m.name)
       .setStyle(amt > 0 ? ButtonStyle.Success : ButtonStyle.Secondary);
   };
 
-  const row1 = new ActionRowBuilder().addComponents(...BAUCUA_MASCOTS.slice(0, 3).map(makeMascotBtn));
-  const row2 = new ActionRowBuilder().addComponents(...BAUCUA_MASCOTS.slice(3, 6).map(makeMascotBtn));
+  const mascotRow1 = new ActionRowBuilder().addComponents(...BAUCUA_MASCOTS.slice(0, 3).map(makeMascotBtn));
+  const mascotRow2 = new ActionRowBuilder().addComponents(...BAUCUA_MASCOTS.slice(3, 6).map(makeMascotBtn));
 
-  const row3 = new ActionRowBuilder().addComponents(
+  const chipRow = new ActionRowBuilder().addComponents(
     ...QUICK_BET_AMOUNTS.map((amt) =>
       new ButtonBuilder()
         .setCustomId(`vgame:baucua:chip:${user.id}:${amt}`)
-        .setLabel(`${formatNumber(amt)} VNĐ`)
+        .setLabel(`${formatNumber(amt)} ₫`)
         .setStyle(activeChip === amt ? ButtonStyle.Primary : ButtonStyle.Secondary)
     )
   );
 
-  const row4 = new ActionRowBuilder().addComponents(
+  const confirmRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`vgame:baucua:chip:${user.id}:all`)
-      .setLabel('🔥 Tất cả')
+      .setLabel('Tất cả')
+      .setEmoji('🔥')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId(`vgame:baucua:modal:${user.id}`)
-      .setLabel('✏️ Đặt riêng từng cửa')
+      .setLabel('Nhập từng cửa')
+      .setEmoji('✏️')
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
-      .setCustomId(`vgame:baucua:clear:${user.id}`)
-      .setLabel('🧹 Xóa chọn')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(totalBet === 0)
-  );
-
-  const row5 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
       .setCustomId(`vgame:baucua:confirm:${user.id}`)
-      .setLabel('✅ Xác nhận')
+      .setLabel('Xác nhận Lắc')
+      .setEmoji('✅')
       .setStyle(ButtonStyle.Success)
       .setDisabled(!canConfirm),
     new ButtonBuilder()
       .setCustomId(`vgame:baucua:cancel:${user.id}`)
-      .setLabel('❌ Hủy')
+      .setLabel('Hủy')
+      .setEmoji('❌')
       .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId(`vgame:baucua:back:${user.id}`)
-      .setLabel('⬅️ Quay lại')
+      .setLabel('Quay lại')
+      .setEmoji('⬅️')
       .setStyle(ButtonStyle.Secondary)
   );
 
-  return {
-    embeds: [embed],
-    files: [gridArt.attachment],
-    components: [row1, row2, row3, row4, row5],
-  };
+  const controlsContainer = createContainer({
+    accentColor: THEME.NEON_PURPLE,
+    children: [
+      textDisplay('### 🎯 KHU VỰC CHỌN CỬA • CHỌN PHỈNH & XÁC NHẬN'),
+      mascotRow1,
+      mascotRow2,
+      separator(),
+      chipRow,
+      confirmRow,
+    ],
+  });
+
+  return buildCv2Payload({
+    containers: [boardContainer, controlsContainer],
+    files: mascotGallery.files,
+    ephemeral,
+  });
 }
 
 async function runBauCuaConfirmedRound(editFn, user, betsMap, systems) {
-  // BƯỚC AN TOÀN: Lưu kết quả RNG & quyết toán SQLite TRƯỚC khi chạy animation
+  // AN TOÀN TUYỆT ĐỐI: Lưu kết quả RNG & quyết toán SQLite TRƯỚC khi hiển thị animation
   const res = systems.gameSystem.playBauCua({
     userId: user.id,
     username: user.username,
     bets: betsMap,
   });
+  saveLastBauCuaStakes(user.id, res.cleanBets);
   clearBettingDraft(GAME_IDS.BAUCUA, user.id);
   systems.gameSystem.releaseActivePlayer(GAME_IDS.BAUCUA, user.id);
 
-  // Giai đoạn 1–3: Chuẩn bị & Lắc 3 viên xúc xắc linh vật bằng GIF động cục bộ
+  // Khu vực Animation Xúc Xắc Bầu Cua
   const shakeGif = buildAssetAttachment(ASSET_PATHS.BAUCUA_SHAKE_GIF, 'baucua_shake.gif');
-  const rollingEmbed = new EmbedBuilder()
-    .setColor(COLORS.WARNING)
-    .setTitle('🎲 ĐANG LẮC 3 VIÊN XÚC XẮC BẦU CUA...')
-    .setDescription(
-      `👤 <@${user.id}> đã khóa cược **${formatVnd(res.totalBet)}**!\n` +
-      `🥣 *Đang chuẩn bị bát và lắc đều 3 viên xúc xắc linh vật...*`
-    )
-    .setImage(shakeGif.url);
+  const stagePayload = buildCv2Payload({
+    containers: [
+      createContainer({
+        accentColor: THEME.AMBER_PULSE,
+        children: [
+          textDisplay(
+            `## 🥣 ĐANG XÓC ĐĨA 3 XÚC XẮC BẦU CUA...\n` +
+              `👤 <@${user.id}> đã khóa tổng cược **${formatVnd(res.totalBet)}**\n` +
+              `⏳ Tiến trình mở bát: \`${renderNeonBar(7, 10, 10)}\` *Đang lắc đều 3 viên xúc xắc linh vật...*`
+          ),
+          mediaGallery([{ url: shakeGif.url, description: 'Đang lắc 3 viên xúc xắc Bầu Cua' }]),
+        ],
+      }),
+    ],
+    files: [shakeGif.attachment],
+  });
 
-  await editFn({ embeds: [rollingEmbed], files: [shakeGif.attachment], components: [] });
-  await sleep(950);
-
-  // Giai đoạn 4–7: Hiển thị 3 xúc xắc thực tế, bảng thanh toán chi tiết (2x / 3x / 4x) & nút Chơi lại
+  // Bảng kết quả 3 hình linh vật + Bảng thanh toán chi tiết
   const rolledObjs = res.rolledMascots.map((m) =>
     typeof m === 'string' ? BAUCUA_MASCOTS.find((x) => x.id === m) : m
   );
   const rolledIds = rolledObjs.map((m) => m.id);
-  const diceImg = buildBauCuaResultAttachment(rolledIds, res.net > 0);
-  const badgeBanner = buildAssetAttachment(
+  const rollGallery = buildBauCuaRollGalleryAssets(rolledObjs);
+  const badge = buildAssetAttachment(
     res.net >= 0 ? ASSET_PATHS.VICTORY_BANNER : ASSET_PATHS.DEFEAT_BANNER,
     res.net >= 0 ? 'victory.png' : 'defeat.png'
   );
 
-  const payoutTable = Object.entries(res.cleanBets).map(([mId, stake]) => {
+  const payoutRows = Object.entries(res.cleanBets).map(([mId, stake]) => {
     const mascot = BAUCUA_MASCOTS.find((x) => x.id === mId);
     const hits = rolledIds.filter((id) => id === mId).length;
     const winReturn = hits > 0 ? stake * (hits + 1) : 0;
     const multTag =
       hits > 0
-        ? `Nhận ${hits + 1}x (+${formatVnd(winReturn)})`
-        : `0x (Mất ${formatVnd(stake)})`;
-    return `• ${mascot.emoji} **${mascot.name}** (Đặt \`${formatVnd(stake)}\`) — Ra **${hits} lần** ➔ **${multTag}**`;
+        ? `Nhận **${hits + 1}x** (+${formatVnd(winReturn)})`
+        : `0x (-${formatVnd(stake)})`;
+    return `• ${mascot.emoji} **${mascot.name}** (\`${formatVnd(stake)}\`) — Ra **${hits} nháy** ➔ ${multTag}`;
   });
 
-  const resultEmbed = new EmbedBuilder()
-    .setColor(res.net > 0 ? COLORS.SUCCESS : res.net === 0 ? COLORS.WARNING : COLORS.DANGER)
-    .setTitle('🦀 KẾT QUẢ MỞ BÁT BẦU CUA TÔM CÁ')
-    .setDescription(
-      [
-        `🎲 **3 Xúc Xắc Mở Ra:**  ${rolledObjs.map((m) => `${m.emoji} **${m.name.toUpperCase()}**`).join('  │  ')}`,
-        '',
-        '📊 **Bảng Thanh Toán Chi Tiết:**',
-        ...payoutTable,
-        '',
-        `💵 **Tổng đặt cược:** \`${formatVnd(res.totalBet)}\``,
-        `🏆 **Tổng nhận lại:** \`${formatVnd(res.payout)}\``,
-        `${res.net >= 0 ? '📈 **Lãi ròng:**' : '📉 **Biến động:**'} **${res.net >= 0 ? '+' : ''}${formatVnd(res.net)}**`,
-        `💰 **Số dư ví mới:** **${formatVnd(res.balanceAfter)}**`,
-      ].join('\n')
-    )
-    .setImage(diceImg.url)
-    .setThumbnail(badgeBanner.url)
-    .setTimestamp();
+  const rebetBtn = new ButtonBuilder()
+    .setCustomId(`vgame:baucua:rebet:${user.id}`)
+    .setLabel('Đặt lại cửa cũ')
+    .setEmoji('🔁')
+    .setStyle(ButtonStyle.Primary);
 
-  const replayRow = buildPostGameRow({
-    replayCustomId: `vgame:baucua:open:${user.id}`,
-    userId: user.id,
+  const resultContainer = createContainer({
+    accentColor: res.net > 0 ? THEME.CYBER_EMERALD : res.net === 0 ? THEME.NEON_GOLD : THEME.CRIMSON_NEON,
+    children: [
+      sectionWithThumbnail({
+        texts: [
+          `## 🦀 KẾT QUẢ MỞ BÁT BẦU CUA`,
+          `🎲 **3 Xúc Xắc:** ${rolledObjs.map((m) => `${m.emoji} **${m.name.toUpperCase()}**`).join('  │  ')}`,
+        ],
+        url: badge.url,
+        description: res.net >= 0 ? 'Chiến thắng' : 'Chưa trúng',
+      }),
+      mediaGallery(rollGallery.items),
+      separator(),
+      textDisplay(
+        `### 📊 Bảng Thanh Toán Chi Tiết\n` +
+          `${payoutRows.join('\n')}\n\n` +
+          `💵 **Tổng đặt:** \`${formatVnd(res.totalBet)}\` • 🏆 **Nhận về:** \`${formatVnd(res.payout)}\`\n` +
+          `${res.net >= 0 ? '📈 **Lãi ròng:**' : '📉 **Biến động:**'} **${res.net >= 0 ? '+' : ''}${formatVnd(res.net)}** • 💰 **Ví mới:** **${formatVnd(res.balanceAfter)}**`
+      ),
+      separator(),
+      buildPostGameRow({
+        replayCustomId: `vgame:baucua:open:${user.id}`,
+        userId: user.id,
+        extraButton: rebetBtn,
+      }),
+    ],
   });
 
-  await editFn({
-    embeds: [resultEmbed],
-    files: [diceImg.attachment, badgeBanner.attachment],
-    components: [replayRow],
+  const finalPayload = buildCv2Payload({
+    containers: [resultContainer],
+    files: [...rollGallery.files, badge.attachment],
+  });
+
+  await globalAnimationManager.runStagedAnimation({
+    scopeKey: `baucua:${user.id}`,
+    editFn,
+    stages: [{ payload: stagePayload, delayMs: 850 }],
+    finalPayload,
   });
 }
 
 // ============================================================================
-// 2. ƯU TIÊN SỐ 1: TÀI XỈU – GIAO DIỆN CASINO (4–10 XỈU, 11–17 TÀI, 3/18 NHÀ CÁI)
+// 2. ƯU TIÊN SỐ 1: TÀI XỈU PRO MAX (COMPONENTS V2 – KHU VỰC TÀI/XỈU & 3 XÚC XẮC)
 // ============================================================================
 
 function formatTaiXiuRoad(recentLogs) {
@@ -327,7 +412,14 @@ function formatTaiXiuRoad(recentLogs) {
     .join(' ');
 }
 
-export function buildTaiXiuBoardPayload(user, systems) {
+function extractLastDiceFromLogs(recentLogs) {
+  const first = recentLogs?.[0]?.detail || '';
+  const m = first.match(/(\d)\s*[+,-]\s*(\d)\s*[+,-]\s*(\d)/);
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+  return [6, 5, 4];
+}
+
+export function buildTaiXiuBoardPayload(user, systems, { ephemeral = false } = {}) {
   systems.gameSystem.touchActivePlayer(GAME_IDS.TAIXIU, user.id);
   const wallet = systems.economySystem.ensureUser(user.id, user.username).wallet;
   const { minBet, maxBet } = getBetBounds(systems.db);
@@ -337,35 +429,50 @@ export function buildTaiXiuBoardPayload(user, systems) {
 
   const dash = systems.gameSystem.getTaiXiuDashboard(user.id);
   const roadStr = formatTaiXiuRoad(dash.recentLogs);
+  const previewDice = extractLastDiceFromLogs(dash.recentLogs);
+
   const banner = buildAssetAttachment(ASSET_PATHS.GAME_TAIXIU, 'taixiu_casino.png');
+  const diceGallery = buildDiceGalleryAssets(previewDice, 'tx_prev');
 
   const choiceLabel =
     choice === 'tai' ? '🔴 **KHU VỰC TÀI (11 – 17 điểm)**' : '🔵 **KHU VỰC XỈU (4 – 10 điểm)**';
   const canConfirm = betAmount >= minBet && betAmount <= maxBet && wallet >= betAmount;
 
-  const embed = new EmbedBuilder()
-    .setColor(choice === 'tai' ? COLORS.DANGER : COLORS.INFO)
-    .setTitle('🎲 SÒNG TÀI XỈU HOÀNG GIA – GIAO DIỆN CASINO')
-    .setDescription(
-      [
-        formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel }),
-        '',
-        `🧭 **Cầu 10 phiên gần nhất:** ${roadStr}`,
-        `📈 **Thành tích của bạn:** \`${dash.personal.wins}/${dash.personal.total}\` thắng (**${dash.personal.winRate}%**)`,
-        '*Quy tắc: Tổng **4–10** = Xỉu • Tổng **11–17** = Tài • Tổng **3 hoặc 18** = Nhà cái thắng • Thắng nhận **2x**.*',
-      ].join('\n')
-    )
-    .setImage(banner.url)
-    .setTimestamp();
+  const casinoContainer = createContainer({
+    accentColor: choice === 'tai' ? THEME.CRIMSON_NEON : THEME.CYAN_BRIGHT,
+    children: [
+      mediaGallery([{ url: banner.url, description: 'Sòng Tài Xỉu Hoàng Gia VIP' }]),
+      textDisplay(
+        `## 🎲 SÒNG TÀI XỈU HOÀNG GIA — KHU VỰC ĐẶT CƯỢC\n` +
+          `🔴 **TÀI: Tổng 11–17**   ━━━⚔️━━━   🔵 **XỈU: Tổng 4–10**\n` +
+          `-# ⚠️ Tổng 3 hoặc 18 (Bộ ba đồng nhất): Nhà cái thắng • Thắng cửa nhận **2x**`
+      ),
+      mediaGallery(diceGallery.items),
+      separator(),
+      sectionWithButton({
+        texts: [
+          `🧭 **Lịch sử 10 phiên:** ${roadStr}\n📊 **Tỷ lệ thắng của bạn:** \`${dash.personal.wins}/${dash.personal.total}\` (**${dash.personal.winRate}%**)`,
+          formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel }),
+        ],
+        button: new ButtonBuilder()
+          .setCustomId(`vgame:taixiu:private:${user.id}`)
+          .setLabel('Cược Riêng Tư')
+          .setEmoji('🔒')
+          .setStyle(ButtonStyle.Secondary),
+      }),
+    ],
+  });
 
   const zoneRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`vgame:taixiu:pick:${user.id}:tai`)
-      .setLabel('🔴 KHU VỰC TÀI (11–17)')
+      .setLabel('ĐẶT KHU VỰC TÀI (11–17)')
+      .setEmoji('🔴')
       .setStyle(choice === 'tai' ? ButtonStyle.Danger : ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`vgame:taixiu:pick:${user.id}:xiu`)
-      .setLabel('🔵 KHU VỰC XỈU (4–10)')
+      .setLabel('ĐẶT KHU VỰC XỈU (4–10)')
+      .setEmoji('🔵')
       .setStyle(choice === 'xiu' ? ButtonStyle.Primary : ButtonStyle.Secondary)
   );
 
@@ -374,18 +481,23 @@ export function buildTaiXiuBoardPayload(user, systems) {
     userId: user.id,
     selectedBet: betAmount,
     canConfirm,
-    confirmLabel: 'Xác nhận Lắc Xúc Xắc',
+    confirmLabel: 'Tung Xúc Xắc',
   });
 
-  return {
-    embeds: [embed],
-    files: [banner.attachment],
-    components: [zoneRow, ...bettingRows],
-  };
+  const betContainer = createContainer({
+    accentColor: THEME.NEON_PURPLE,
+    children: [zoneRow, separator(), ...bettingRows],
+  });
+
+  return buildCv2Payload({
+    containers: [casinoContainer, betContainer],
+    files: [banner.attachment, ...diceGallery.files],
+    ephemeral,
+  });
 }
 
 async function runTaiXiuConfirmedRound(editFn, user, choice, betAmount, systems) {
-  // Chốt kết quả an toàn trong SQLite trước khi diễn hoạt xúc xắc
+  // Chốt kết quả RNG & SQLite an toàn trước khi hiển thị hiệu ứng tung xúc xắc
   const res = systems.gameSystem.playTaiXiu({
     userId: user.id,
     username: user.username,
@@ -395,64 +507,82 @@ async function runTaiXiuConfirmedRound(editFn, user, choice, betAmount, systems)
   clearBettingDraft(GAME_IDS.TAIXIU, user.id);
   systems.gameSystem.releaseActivePlayer(GAME_IDS.TAIXIU, user.id);
 
-  // Giai đoạn tung xúc xắc động
   const rollGif = buildAssetAttachment(ASSET_PATHS.DICE_ROLL_GIF, 'dice_roll.gif');
-  const rollingEmbed = new EmbedBuilder()
-    .setColor(COLORS.GOLD)
-    .setTitle('🎲 ĐANG TUNG 3 VIÊN XÚC XẮC TÀI XỈU...')
-    .setDescription(
-      `👤 <@${user.id}> đặt **${formatVnd(res.totalBet)}** vào cửa **${choice === 'tai' ? '🔴 TÀI (11–17)' : '🔵 XỈU (4–10)'}**!\n` +
-      `✨ *3 viên xúc xắc đang lăn trong đĩa ngọc...*`
-    )
-    .setImage(rollGif.url);
+  const stagePayload = buildCv2Payload({
+    containers: [
+      createContainer({
+        accentColor: THEME.AMBER_PULSE,
+        children: [
+          textDisplay(
+            `## 🎲 ĐANG TUNG 3 VIÊN XÚC XẮC NGỌC...\n` +
+              `👤 <@${user.id}> đặt **${formatVnd(res.totalBet)}** vào **${choice === 'tai' ? '🔴 KHU VỰC TÀI (11–17)' : '🔵 KHU VỰC XỈU (4–10)'}**\n` +
+              `⏳ Tiến trình lắc đĩa: \`${renderNeonBar(7, 10, 10)}\``
+          ),
+          mediaGallery([{ url: rollGif.url, description: 'Đang tung 3 viên xúc xắc Tài Xỉu' }]),
+        ],
+      }),
+    ],
+    files: [rollGif.attachment],
+  });
 
-  await editFn({ embeds: [rollingEmbed], files: [rollGif.attachment], components: [] });
-  await sleep(950);
-
-  // Hiển thị hình 3 mặt xúc xắc thực tế vừa dừng lại + kết quả thanh toán
-  const diceImg = buildThreeDiceResultAttachment(res.dice, res.won);
-  const resultThumb = buildAssetAttachment(
+  // Ba hình xúc xắc thực tế dừng lại + Bảng thanh toán & lịch sử cầu mới nhất
+  const diceGallery = buildDiceGalleryAssets(res.dice, 'tx_rolled');
+  const resultBadge = buildAssetAttachment(
     res.won ? ASSET_PATHS.VICTORY_BANNER : ASSET_PATHS.DEFEAT_BANNER,
     res.won ? 'victory.png' : 'defeat.png'
   );
   const dash = systems.gameSystem.getTaiXiuDashboard(user.id);
 
-  const resultEmbed = new EmbedBuilder()
-    .setColor(res.won ? COLORS.SUCCESS : COLORS.DANGER)
-    .setTitle(`🎲 KẾT QUẢ TÀI XỈU — ${res.outcomeLabel}`)
-    .setDescription(
-      [
-        `🎯 **3 Viên Xúc Xắc:** ${res.diceFaces.join('  ')}  *(Điểm từng viên: \`${res.dice.join(' + ')} = ${res.sum}\`)*`,
-        `🏷️ **Kết quả bàn:** **${res.outcomeLabel}**`,
-        `🫵 **Cửa bạn chọn:** **${choice === 'tai' ? '🔴 TÀI (11–17)' : '🔵 XỈU (4–10)'}** • Cược: \`${formatVnd(res.totalBet)}\``,
-        res.won
-          ? `🎉 **THẮNG LỚN (2x)!** Nhận về **${formatVnd(res.payout)}** *(Lãi ròng: +${formatVnd(res.net)})*`
-          : `💸 **CHƯA MAY MẮN!** Bạn mất **${formatVnd(res.totalBet)}**`,
-        `💰 **Số dư ví mới:** **${formatVnd(res.balanceAfter)}**`,
-        `🧭 **Cầu mới nhất:** ${formatTaiXiuRoad(dash.recentLogs)}`,
-      ].join('\n')
-    )
-    .setImage(diceImg.url)
-    .setThumbnail(resultThumb.url)
-    .setTimestamp();
-
-  const replayRow = buildPostGameRow({
-    replayCustomId: `vgame:taixiu:open:${user.id}`,
-    userId: user.id,
+  const resultContainer = createContainer({
+    accentColor: res.won ? THEME.CYBER_EMERALD : THEME.CRIMSON_NEON,
+    children: [
+      sectionWithThumbnail({
+        texts: [
+          `## 🎲 KẾT QUẢ TÀI XỈU — ${res.outcomeLabel}`,
+          `🎯 **Điểm 3 viên:** ${res.diceFaces.join('  ')}  ➔  **\`${res.dice.join(' + ')} = ${res.sum} điểm\`**`,
+        ],
+        url: resultBadge.url,
+        description: res.outcomeLabel,
+      }),
+      mediaGallery(diceGallery.items),
+      separator(),
+      textDisplay(
+        `### 📊 Bảng Thanh Toán Phiên\n` +
+          `• **Cửa đã đặt:** **${choice === 'tai' ? '🔴 TÀI (11–17)' : '🔵 XỈU (4–10)'}** — Tiền cược: \`${formatVnd(res.totalBet)}\`\n` +
+          `• **Kết quả thanh toán:** ${
+            res.won
+              ? `🎉 **THẮNG 2X!** Nhận về **${formatVnd(res.payout)}** *(Lãi ròng +${formatVnd(res.net)})*`
+              : `💸 **CHƯA TRÚNG!** Biến động **-${formatVnd(res.totalBet)}**`
+          }\n` +
+          `• **Số dư ví mới:** **${formatVnd(res.balanceAfter)}**\n` +
+          `• **Lịch sử cầu mới nhất:** ${formatTaiXiuRoad(dash.recentLogs)}`
+      ),
+      separator(),
+      buildPostGameRow({
+        replayCustomId: `vgame:taixiu:open:${user.id}`,
+        userId: user.id,
+      }),
+    ],
   });
 
-  await editFn({
-    embeds: [resultEmbed],
-    files: [diceImg.attachment, resultThumb.attachment],
-    components: [replayRow],
+  const finalPayload = buildCv2Payload({
+    containers: [resultContainer],
+    files: [...diceGallery.files, resultBadge.attachment],
+  });
+
+  await globalAnimationManager.runStagedAnimation({
+    scopeKey: `taixiu:${user.id}`,
+    editFn,
+    stages: [{ payload: stagePayload, delayMs: 850 }],
+    finalPayload,
   });
 }
 
 // ============================================================================
-// 3. ĐỒNG BỘ GIAO DIỆN HÌNH ẢNH: TUNG ĐỒNG XU (/coinflip)
+// 3. TUNG ĐỒNG XU PRO MAX (COMPONENTS V2 – ĐỒNG XU LỚN, SẤP/NGỬA & ANIMATION)
 // ============================================================================
 
-export function buildCoinflipBoardPayload(user, systems) {
+export function buildCoinflipBoardPayload(user, systems, { ephemeral = false } = {}) {
   systems.gameSystem.touchActivePlayer(GAME_IDS.COINFLIP, user.id);
   const wallet = systems.economySystem.ensureUser(user.id, user.username).wallet;
   const { minBet, maxBet } = getBetBounds(systems.db);
@@ -460,25 +590,41 @@ export function buildCoinflipBoardPayload(user, systems) {
   const side = draft.choice || 'sap';
   const betAmount = draft.betAmount || Math.max(minBet, 1_000);
 
-  const banner = buildAssetAttachment(ASSET_PATHS.GAME_COINFLIP, 'coinflip_banner.png');
+  const sapCoin = buildAssetAttachment(ASSET_PATHS.COIN_SAP, 'coin_sap.png');
+  const nguaCoin = buildAssetAttachment(ASSET_PATHS.COIN_NGUA, 'coin_ngua.png');
+  const activeCoinUrl = side === 'sap' ? sapCoin.url : nguaCoin.url;
+
   const choiceLabel = side === 'sap' ? '🪙 **Mặt SẤP (Hoàng Kim Bảo)**' : '🌟 **Mặt NGỬA (Ngôi Sao Đại Cát)**';
   const canConfirm = betAmount >= minBet && betAmount <= maxBet && wallet >= betAmount;
 
-  const embed = new EmbedBuilder()
-    .setColor(COLORS.GOLD)
-    .setTitle('🪙 TUNG ĐỒNG XU HOÀNG KIM – GIAO DIỆN ĐẶT CƯỢC')
-    .setDescription(formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel }))
-    .setImage(banner.url)
-    .setTimestamp();
+  const topContainer = createContainer({
+    accentColor: THEME.NEON_GOLD,
+    children: [
+      sectionWithThumbnail({
+        texts: [
+          `## 🪙 TUNG ĐỒNG XU HOÀNG KIM (THƯỞNG 2X)`,
+          formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel }),
+        ],
+        url: activeCoinUrl,
+        description: side === 'sap' ? 'Đồng xu mặt Sấp' : 'Đồng xu mặt Ngửa',
+      }),
+      mediaGallery([
+        { url: sapCoin.url, description: 'Mặt SẤP — Hoàng Kim Bảo' },
+        { url: nguaCoin.url, description: 'Mặt NGỬA — Ngôi Sao Đại Cát' },
+      ]),
+    ],
+  });
 
   const sideRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`vgame:coinflip:pick:${user.id}:sap`)
-      .setLabel('🪙 Chọn Mặt SẤP')
+      .setLabel('Chọn Mặt SẤP')
+      .setEmoji('🪙')
       .setStyle(side === 'sap' ? ButtonStyle.Success : ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`vgame:coinflip:pick:${user.id}:ngua`)
-      .setLabel('🌟 Chọn Mặt NGỬA')
+      .setLabel('Chọn Mặt NGỬA')
+      .setEmoji('🌟')
       .setStyle(side === 'ngua' ? ButtonStyle.Success : ButtonStyle.Secondary)
   );
 
@@ -487,14 +633,19 @@ export function buildCoinflipBoardPayload(user, systems) {
     userId: user.id,
     selectedBet: betAmount,
     canConfirm,
-    confirmLabel: 'Xác nhận Tung Xu',
+    confirmLabel: 'Tung Đồng Xu',
   });
 
-  return {
-    embeds: [embed],
-    files: [banner.attachment],
-    components: [sideRow, ...bettingRows],
-  };
+  const controlContainer = createContainer({
+    accentColor: THEME.NEON_PURPLE,
+    children: [sideRow, separator(), ...bettingRows],
+  });
+
+  return buildCv2Payload({
+    containers: [topContainer, controlContainer],
+    files: [sapCoin.attachment, nguaCoin.attachment],
+    ephemeral,
+  });
 }
 
 async function runCoinflipConfirmedRound(editFn, user, side, betAmount, systems) {
@@ -508,55 +659,75 @@ async function runCoinflipConfirmedRound(editFn, user, side, betAmount, systems)
   systems.gameSystem.releaseActivePlayer(GAME_IDS.COINFLIP, user.id);
 
   const flipGif = buildAssetAttachment(ASSET_PATHS.COIN_FLIP_GIF, 'coin_flip.gif');
-  const spinEmbed = new EmbedBuilder()
-    .setColor(COLORS.GOLD)
-    .setTitle('🪙 ĐỒNG XU ĐANG XOAY TRÊN KHÔNG...')
-    .setDescription(
-      `👤 <@${user.id}> đặt **${formatVnd(res.totalBet)}** vào cửa **${side === 'sap' ? 'Mặt SẤP' : 'Mặt NGỬA'}**!`
-    )
-    .setImage(flipGif.url);
-
-  await editFn({ embeds: [spinEmbed], files: [flipGif.attachment], components: [] });
-  await sleep(900);
+  const spinStage = buildCv2Payload({
+    containers: [
+      createContainer({
+        accentColor: THEME.NEON_GOLD,
+        children: [
+          textDisplay(
+            `## 🪙 ĐỒNG XU ĐANG XOAY TRÊN KHÔNG...\n` +
+              `👤 <@${user.id}> đặt **${formatVnd(res.totalBet)}** vào cửa **${side === 'sap' ? 'Mặt SẤP' : 'Mặt NGỬA'}** • \`${renderNeonBar(7, 10, 10)}\``
+          ),
+          mediaGallery([{ url: flipGif.url, description: 'Đồng xu đang xoay' }]),
+        ],
+      }),
+    ],
+    files: [flipGif.attachment],
+  });
 
   const coinFace = buildAssetAttachment(
     res.resultSide === 'sap' ? ASSET_PATHS.COIN_SAP : ASSET_PATHS.COIN_NGUA,
-    res.resultSide === 'sap' ? 'coin_sap.png' : 'coin_ngua.png'
+    res.resultSide === 'sap' ? 'res_coin_sap.png' : 'res_coin_ngua.png'
   );
-  const banner = buildAssetAttachment(
+  const badge = buildAssetAttachment(
     res.won ? ASSET_PATHS.VICTORY_BANNER : ASSET_PATHS.DEFEAT_BANNER,
     res.won ? 'victory.png' : 'defeat.png'
   );
 
-  const doneEmbed = new EmbedBuilder()
-    .setColor(res.won ? COLORS.SUCCESS : COLORS.DANGER)
-    .setTitle(`🪙 ĐỒNG XU DỪNG LẠI: ${res.resultSide === 'sap' ? 'MẶT SẤP' : 'MẶT NGỬA'}!`)
-    .setDescription(
-      [
-        `• Bạn chọn: **${res.chosenSide === 'sap' ? 'Mặt Sấp' : 'Mặt Ngửa'}**`,
-        `• Kết quả mở xu: **${res.resultSide === 'sap' ? 'Mặt Sấp' : 'Mặt Ngửa'}**`,
-        res.won
-          ? `🎉 **TRÚNG THƯỞNG (2x):** Nhận **${formatVnd(res.payout)}** *(Lãi +${formatVnd(res.net)})*`
-          : `💸 **TRƯỢT:** Mất **${formatVnd(res.totalBet)}**`,
-        `💰 **Số dư ví mới:** **${formatVnd(res.balanceAfter)}**`,
-      ].join('\n')
-    )
-    .setThumbnail(coinFace.url)
-    .setImage(banner.url)
-    .setTimestamp();
+  const resultContainer = createContainer({
+    accentColor: res.won ? THEME.CYBER_EMERALD : THEME.CRIMSON_NEON,
+    children: [
+      sectionWithThumbnail({
+        texts: [
+          `## 🪙 KẾT QUẢ MỞ XU: ${res.resultSide === 'sap' ? 'MẶT SẤP' : 'MẶT NGỬA'}!`,
+          `• **Cửa bạn chọn:** ${res.chosenSide === 'sap' ? '🪙 Mặt Sấp' : '🌟 Mặt Ngửa'}\n` +
+            `• **Đồng xu dừng tại:** **${res.resultSide === 'sap' ? '🪙 Mặt Sấp' : '🌟 Mặt Ngửa'}**`,
+        ],
+        url: badge.url,
+        description: res.won ? 'Thắng cược' : 'Chưa trúng',
+      }),
+      mediaGallery([{ url: coinFace.url, description: `Đồng xu dừng ở ${res.resultSide === 'sap' ? 'Mặt Sấp' : 'Mặt Ngửa'}` }]),
+      separator(),
+      textDisplay(
+        `### 📊 Bảng Kết Quả & Thanh Toán\n` +
+          (res.won
+            ? `🎉 **TRÚNG THƯỞNG 2X:** Nhận **${formatVnd(res.payout)}** *(Lãi ròng +${formatVnd(res.net)})*`
+            : `💸 **CHƯA MAY MẮN:** Mất tiền cược **-${formatVnd(res.totalBet)}**`) +
+          `\n💰 **Số dư ví mới:** **${formatVnd(res.balanceAfter)}**`
+      ),
+      separator(),
+      buildPostGameRow({ replayCustomId: `vgame:coinflip:open:${user.id}`, userId: user.id }),
+    ],
+  });
 
-  await editFn({
-    embeds: [doneEmbed],
-    files: [coinFace.attachment, banner.attachment],
-    components: [buildPostGameRow({ replayCustomId: `vgame:coinflip:open:${user.id}`, userId: user.id })],
+  const finalPayload = buildCv2Payload({
+    containers: [resultContainer],
+    files: [coinFace.attachment, badge.attachment],
+  });
+
+  await globalAnimationManager.runStagedAnimation({
+    scopeKey: `coinflip:${user.id}`,
+    editFn,
+    stages: [{ payload: spinStage, delayMs: 820 }],
+    finalPayload,
   });
 }
 
 // ============================================================================
-// 4. ĐỒNG BỘ GIAO DIỆN HÌNH ẢNH: OẲN TÙ TÌ (/rps — PvE & PvP)
+// 4. OẲN TÙ TÌ PRO MAX (COMPONENTS V2 – 3 LỰA CHỌN HÌNH ẢNH, ĐẾM NGƯỢC & ĐỐI ĐẦU)
 // ============================================================================
 
-export function buildRpsBoardPayload(user, systems) {
+export function buildRpsBoardPayload(user, systems, { ephemeral = false } = {}) {
   systems.gameSystem.touchActivePlayer(GAME_IDS.RPS, user.id);
   const wallet = systems.economySystem.ensureUser(user.id, user.username).wallet;
   const { minBet, maxBet } = getBetBounds(systems.db);
@@ -564,23 +735,27 @@ export function buildRpsBoardPayload(user, systems) {
   const choice = draft.choice || 'rock';
   const betAmount = draft.betAmount || Math.max(minBet, 1_000);
 
-  const banner = buildAssetAttachment(ASSET_PATHS.GAME_RPS, 'rps_banner.png');
+  const handGallery = buildRpsChoicesGalleryAssets();
   const move = RPS_CHOICES[choice];
-  const choiceLabel = `${move.emoji} **${move.name}** *(Đấu trực tiếp với Bot • Gõ \`/rps doi_thu:@user\` để thách đấu PvP)*`;
+  const choiceLabel = `${move.emoji} **${move.name}** *(Đấu với Bot • Gõ \`/rps doi_thu:@user\` để thách đấu PvP)*`;
   const canConfirm = betAmount >= minBet && betAmount <= maxBet && wallet >= betAmount;
 
-  const embed = new EmbedBuilder()
-    .setColor(COLORS.PRIMARY)
-    .setTitle('✂️ ĐẤU TRƯỜNG OẲN TÙ TÌ – KÉO • BÚA • BAO')
-    .setDescription(formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel }))
-    .setImage(banner.url)
-    .setTimestamp();
+  const arenaContainer = createContainer({
+    accentColor: THEME.NEON_CYAN,
+    children: [
+      textDisplay(`## ✂️ ĐẤU TRƯỜNG OẲN TÙ TÌ — BÚA • BAO • KÉO`),
+      mediaGallery(handGallery.items),
+      separator(),
+      textDisplay(formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel })),
+    ],
+  });
 
   const handRow = new ActionRowBuilder().addComponents(
     ...Object.values(RPS_CHOICES).map((m) =>
       new ButtonBuilder()
         .setCustomId(`vgame:rps:pick:${user.id}:${m.id}`)
-        .setLabel(`${m.emoji} Ra ${m.name.toUpperCase()}`)
+        .setEmoji(m.emoji)
+        .setLabel(`Ra ${m.name.toUpperCase()}`)
         .setStyle(choice === m.id ? ButtonStyle.Success : ButtonStyle.Secondary)
     )
   );
@@ -590,14 +765,19 @@ export function buildRpsBoardPayload(user, systems) {
     userId: user.id,
     selectedBet: betAmount,
     canConfirm,
-    confirmLabel: 'Xác nhận Oẳn Tù Tì',
+    confirmLabel: 'Xác nhận Ra Tay',
   });
 
-  return {
-    embeds: [embed],
-    files: [banner.attachment],
-    components: [handRow, ...bettingRows],
-  };
+  const controlContainer = createContainer({
+    accentColor: THEME.NEON_PURPLE,
+    children: [handRow, separator(), ...bettingRows],
+  });
+
+  return buildCv2Payload({
+    containers: [arenaContainer, controlContainer],
+    files: handGallery.files,
+    ephemeral,
+  });
 }
 
 async function runRpsBotConfirmedRound(editFn, user, choice, betAmount, systems) {
@@ -611,19 +791,23 @@ async function runRpsBotConfirmedRound(editFn, user, choice, betAmount, systems)
   systems.gameSystem.releaseActivePlayer(GAME_IDS.RPS, user.id);
 
   const cdGif = buildAssetAttachment(ASSET_PATHS.RPS_COUNTDOWN_GIF, 'rps_countdown.gif');
-  const cdEmbed = new EmbedBuilder()
-    .setColor(COLORS.PRIMARY)
-    .setTitle('⏳ ĐẾM NGƯỢC OẲN TÙ TÌ: 3... 2... 1...')
-    .setDescription(`👤 <@${user.id}> đặt **${formatVnd(res.totalBet)}** — Hai bên chuẩn bị mở tay đồng thời!`)
-    .setImage(cdGif.url);
+  const cdStage = buildCv2Payload({
+    containers: [
+      createContainer({
+        accentColor: THEME.AMBER_PULSE,
+        children: [
+          textDisplay(
+            `## ⏳ ĐẾM NGƯỢC OẲN TÙ TÌ: 3... 2... 1... MỞ TAY!\n` +
+              `👤 <@${user.id}> (Cược **${formatVnd(res.totalBet)}**) ⚔️ **BOT CAO THỦ**`
+          ),
+          mediaGallery([{ url: cdGif.url, description: 'Đếm ngược Oẳn Tù Tì' }]),
+        ],
+      }),
+    ],
+    files: [cdGif.attachment],
+  });
 
-  await editFn({ embeds: [cdEmbed], files: [cdGif.attachment], components: [] });
-  await sleep(950);
-
-  const handImg = buildAssetAttachment(
-    ASSET_PATHS.RPS_HAND[res.userMove.id],
-    `hand_${res.userMove.id}.png`
-  );
+  const duelGallery = buildRpsDuelGalleryAssets(res.userMove, res.botMove, user.username, 'Bot');
   const outcomeTitle =
     res.outcome === 'win'
       ? '🏆 BẠN ĐÃ CHIẾN THẮNG!'
@@ -631,42 +815,61 @@ async function runRpsBotConfirmedRound(editFn, user, choice, betAmount, systems)
         ? '🤝 HÒA NHAU — HOÀN TIỀN CƯỢC!'
         : '💥 BOT CHIẾN THẮNG!';
 
-  const files = [handImg.attachment];
-  const doneEmbed = new EmbedBuilder()
-    .setColor(res.outcome === 'win' ? COLORS.SUCCESS : res.outcome === 'tie' ? COLORS.WARNING : COLORS.DANGER)
-    .setTitle(`✂️ KẾT QUẢ OẲN TÙ TÌ — ${outcomeTitle}`)
-    .setDescription(
-      [
-        `• Bạn ra: **${res.userMove.emoji} ${res.userMove.name}**`,
-        `• Bot ra: **${res.botMove.emoji} ${res.botMove.name}**`,
-        `• Thanh toán: **${res.net >= 0 ? '+' : ''}${formatVnd(res.net)}**`,
-        `💰 **Số dư ví mới:** **${formatVnd(res.balanceAfter)}**`,
-      ].join('\n')
-    )
-    .setThumbnail(handImg.url)
-    .setTimestamp();
+  const badge = buildAssetAttachment(
+    res.outcome === 'lose' ? ASSET_PATHS.DEFEAT_BANNER : ASSET_PATHS.VICTORY_BANNER,
+    res.outcome === 'lose' ? 'defeat.png' : 'victory.png'
+  );
 
-  if (res.outcome !== 'tie') {
-    const banner = buildAssetAttachment(
-      res.outcome === 'win' ? ASSET_PATHS.VICTORY_BANNER : ASSET_PATHS.DEFEAT_BANNER,
-      res.outcome === 'win' ? 'victory.png' : 'defeat.png'
-    );
-    doneEmbed.setImage(banner.url);
-    files.push(banner.attachment);
-  }
+  const resultContainer = createContainer({
+    accentColor: res.outcome === 'win' ? THEME.CYBER_EMERALD : res.outcome === 'tie' ? THEME.NEON_GOLD : THEME.CRIMSON_NEON,
+    children: [
+      sectionWithThumbnail({
+        texts: [
+          `## ✂️ ${outcomeTitle}`,
+          `👤 **Bạn ra:** ${res.userMove.emoji} **${res.userMove.name}**  ⚔️  🤖 **Bot ra:** ${res.botMove.emoji} **${res.botMove.name}**`,
+        ],
+        url: badge.url,
+        description: outcomeTitle,
+      }),
+      mediaGallery(duelGallery.items),
+      separator(),
+      textDisplay(
+        `• **Biến động cược:** **${res.net >= 0 ? '+' : ''}${formatVnd(res.net)}**\n` +
+          `• **Số dư ví mới:** **${formatVnd(res.balanceAfter)}**`
+      ),
+      separator(),
+      buildPostGameRow({ replayCustomId: `vgame:rps:open:${user.id}`, userId: user.id }),
+    ],
+  });
 
-  await editFn({
-    embeds: [doneEmbed],
-    files,
-    components: [buildPostGameRow({ replayCustomId: `vgame:rps:open:${user.id}`, userId: user.id })],
+  const finalPayload = buildCv2Payload({
+    containers: [resultContainer],
+    files: [...duelGallery.files, badge.attachment],
+  });
+
+  await globalAnimationManager.runStagedAnimation({
+    scopeKey: `rps:${user.id}`,
+    editFn,
+    stages: [{ payload: cdStage, delayMs: 850 }],
+    finalPayload,
   });
 }
 
 // ============================================================================
-// 5. ĐỒNG BỘ GIAO DIỆN HÌNH ẢNH: ĐOÁN SỐ NHIỀU LƯỢT + GỢI Ý LỚN HƠN / NHỎ HƠN
+// 5. ĐOÁN SỐ PRO MAX (COMPONENTS V2 – LƯỢT CÒN LẠI, GỢI Ý, THANH TIẾN TRÌNH & KẾT QUẢ)
 // ============================================================================
 
-export function buildGuessBoardPayload(user, systems) {
+function computeNarrowedBounds(session) {
+  let low = 1;
+  let high = session.mode.max;
+  for (const h of session.history) {
+    if (h.hint === 'higher') low = Math.max(low, h.guess + 1);
+    if (h.hint === 'lower') high = Math.min(high, h.guess - 1);
+  }
+  return { low, high, mid: Math.floor((low + high) / 2) };
+}
+
+export function buildGuessBoardPayload(user, systems, { ephemeral = false } = {}) {
   const activeSession = systems.gameSystem.getGuessSession(user.id);
   if (activeSession) {
     return buildActiveGuessTurnPayload(user, activeSession);
@@ -684,25 +887,32 @@ export function buildGuessBoardPayload(user, systems) {
   const choiceLabel = `🔐 **${modeCfg.label}** *(Thưởng cơ bản **${modeCfg.mult}x** + thưởng lượt dư)*`;
   const canConfirm = betAmount >= minBet && betAmount <= maxBet && wallet >= betAmount;
 
-  const embed = new EmbedBuilder()
-    .setColor(COLORS.INFO)
-    .setTitle('🔢 ĐOÁN SỐ BÍ ẨN – GIAO DIỆN CHỌN ĐỘ KHÓ & MỨC CƯỢC')
-    .setDescription(formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel }))
-    .setImage(banner.url)
-    .setTimestamp();
+  const setupContainer = createContainer({
+    accentColor: THEME.CYAN_BRIGHT,
+    children: [
+      mediaGallery([{ url: banner.url, description: 'Giải Mã Két Số Bí Mật' }]),
+      textDisplay(
+        `## 🔢 GIẢI MÃ KÉT SỐ BÍ MẬT PRO MAX\n` +
+          formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel })
+      ),
+    ],
+  });
 
   const diffRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`vgame:guess:pick:${user.id}:easy`)
-      .setLabel('🟢 Dễ (1–20 • 4 lượt)')
+      .setLabel('Dễ (1–20 • 4 lượt)')
+      .setEmoji('🟢')
       .setStyle(difficulty === 'easy' ? ButtonStyle.Success : ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`vgame:guess:pick:${user.id}:medium`)
-      .setLabel('🟡 TB (1–50 • 5 lượt)')
+      .setLabel('TB (1–50 • 5 lượt)')
+      .setEmoji('🟡')
       .setStyle(difficulty === 'medium' ? ButtonStyle.Primary : ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`vgame:guess:pick:${user.id}:hard`)
-      .setLabel('🔴 Khó (1–100 • 6 lượt)')
+      .setLabel('Khó (1–100 • 6 lượt)')
+      .setEmoji('🔴')
       .setStyle(difficulty === 'hard' ? ButtonStyle.Danger : ButtonStyle.Secondary)
   );
 
@@ -711,78 +921,96 @@ export function buildGuessBoardPayload(user, systems) {
     userId: user.id,
     selectedBet: betAmount,
     canConfirm,
-    confirmLabel: 'Xác nhận Khóa Số Bí Mật',
+    confirmLabel: 'Khóa Số Bí Mật',
   });
 
-  return {
-    embeds: [embed],
+  const controlContainer = createContainer({
+    accentColor: THEME.NEON_PURPLE,
+    children: [diffRow, separator(), ...bettingRows],
+  });
+
+  return buildCv2Payload({
+    containers: [setupContainer, controlContainer],
     files: [banner.attachment],
-    components: [diffRow, ...bettingRows],
-  };
+    ephemeral,
+  });
 }
 
 function buildActiveGuessTurnPayload(user, session, lastTurnInfo = null) {
   const banner = buildAssetAttachment(ASSET_PATHS.GAME_GUESS, 'guess_active.png');
   const remaining = session.maxAttempts - session.attemptsUsed;
-  const hearts = `${'❤️'.repeat(remaining)}${'🖤'.repeat(session.attemptsUsed)}`;
+  const { low, high, mid } = computeNarrowedBounds(session);
 
   const historyLines = session.history.map((h) => {
     const hintText =
       h.hint === 'higher'
         ? `📈 Số bí mật **LỚN HƠN ${h.guess}**`
         : `📉 Số bí mật **NHỎ HƠN ${h.guess}**`;
-    return `• Lượt ${h.attempt}: Đoán \`${h.guess}\` ➔ ${hintText}`;
+    return `• Lượt ${h.attempt}: Đoán \`#${h.guess}\` ➔ ${hintText}`;
   });
 
-  const headline = lastTurnInfo
+  const hintBanner = lastTurnInfo
     ? lastTurnInfo.hint === 'higher'
-      ? `📈 **GỢI Ý:** Con số bí mật **LỚN HƠN ${lastTurnInfo.pick}**!`
-      : `📉 **GỢI Ý:** Con số bí mật **NHỎ HƠN ${lastTurnInfo.pick}**!`
-    : `🔐 Bot đã khóa ngẫu nhiên 1 con số từ **1** đến **${session.mode.max}**!`;
-
-  const embed = new EmbedBuilder()
-    .setColor(COLORS.INFO)
-    .setTitle(`🔢 ĐANG GIẢI MÃ CON SỐ BÍ MẬT — ${session.mode.label.toUpperCase()}`)
-    .setDescription(
-      [
-        `👤 **Người chơi:** <@${user.id}> • Tiền cược đã khóa: **${formatVnd(session.bet)}**`,
-        `🎯 **Phạm vi số:** Từ **1** đến **${session.mode.max}**`,
-        `⏳ **Số lượt còn lại:** ${hearts} (\`${remaining}/${session.maxAttempts} lượt\`)`,
-        '',
-        headline,
-        historyLines.length > 0 ? `\n📜 **Nhật ký dự đoán:**\n${historyLines.join('\n')}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n')
-    )
-    .setImage(banner.url)
-    .setFooter({ text: 'Bấm nút "Nhập Số Dự Đoán" bên dưới để đoán lượt tiếp theo!' })
-    .setTimestamp();
+      ? `### 📈 GỢI Ý TRỰC QUAN: SỐ BÍ MẬT **LỚN HƠN ${lastTurnInfo.pick}**!`
+      : `### 📉 GỢI Ý TRỰC QUAN: SỐ BÍ MẬT **NHỎ HƠN ${lastTurnInfo.pick}**!`
+    : `### 🔐 KÉT ĐÃ KHÓA 1 CON SỐ TỪ **1** ĐẾN **${session.mode.max}**`;
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`vgame:guess:input:${user.id}`)
-      .setLabel(`🔢 Nhập Số Dự Đoán (1 – ${session.mode.max})`)
-      .setStyle(ButtonStyle.Success)
+      .setLabel(`Nhập Dự Đoán (${low} – ${high})`)
+      .setEmoji('🔢')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`vgame:guess:quick:${user.id}:${mid}`)
+      .setLabel(`Đoán nhanh số giữa: #${mid}`)
+      .setEmoji('⚡')
+      .setStyle(ButtonStyle.Primary)
   );
 
-  return {
-    embeds: [embed],
+  const decoderContainer = createContainer({
+    accentColor: THEME.NEON_CYAN,
+    children: [
+      mediaGallery([{ url: banner.url, description: 'Bảng giải mã số bí mật' }]),
+      textDisplay(
+        `## 🔢 BẢNG GIẢI MÃ SỐ — ${session.mode.label.toUpperCase()}\n` +
+          `👤 <@${user.id}> • Cược đã khóa: **${formatVnd(session.bet)}**\n` +
+          `⏳ **Lượt còn lại:** ${renderAttemptHearts(remaining, session.attemptsUsed)} (\`${remaining}/${session.maxAttempts}\`)\n` +
+          `📊 **Thanh tiến trình:** \`${renderNeonBar(remaining, session.maxAttempts, 10)}\` • **Khoảng thu hẹp:** \`[ ${low} ── ? ── ${high} ]\``
+      ),
+      separator(),
+      textDisplay(
+        `${hintBanner}\n` +
+          (historyLines.length > 0 ? `${historyLines.join('\n')}` : '*(Hãy nhập con số dự đoán đầu tiên của bạn!)*')
+      ),
+      separator(),
+      row,
+    ],
+  });
+
+  return buildCv2Payload({
+    containers: [decoderContainer],
     files: [banner.attachment],
-    components: [row],
-  };
+  });
 }
 
 async function renderFinishedGuessRound(editFn, user, turnResult) {
   const vaultGif = buildAssetAttachment(ASSET_PATHS.GUESS_VAULT_GIF, 'vault_open.gif');
-  const animEmbed = new EmbedBuilder()
-    .setColor(COLORS.GOLD)
-    .setTitle('🔓 ĐANG MỞ KÉT KẾT QUẢ BÍ MẬT...')
-    .setDescription(`Đang đối chiếu dự đoán **#${turnResult.pick}** của <@${user.id}> với mã khóa...`)
-    .setImage(vaultGif.url);
-
-  await editFn({ embeds: [animEmbed], files: [vaultGif.attachment], components: [] });
-  await sleep(850);
+  const openStage = buildCv2Payload({
+    containers: [
+      createContainer({
+        accentColor: THEME.AMBER_PULSE,
+        children: [
+          textDisplay(
+            `## 🔓 ĐANG MỞ KÉT KIỂM TRA MÃ SỐ #${turnResult.pick}...\n` +
+              `⏳ Xác thực khóa mật mã: \`${renderNeonBar(8, 10, 10)}\``
+          ),
+          mediaGallery([{ url: vaultGif.url, description: 'Đang mở két số bí mật' }]),
+        ],
+      }),
+    ],
+    files: [vaultGif.attachment],
+  });
 
   const banner = buildAssetAttachment(
     turnResult.won ? ASSET_PATHS.VICTORY_BANNER : ASSET_PATHS.DEFEAT_BANNER,
@@ -792,39 +1020,44 @@ async function renderFinishedGuessRound(editFn, user, turnResult) {
     .map((h) => `\`#${h.guess}\`${h.hint === 'correct' ? '✅' : h.hint === 'higher' ? '↑' : '↓'}`)
     .join(' ➔ ');
 
-  const doneEmbed = new EmbedBuilder()
-    .setColor(turnResult.won ? COLORS.SUCCESS : COLORS.DANGER)
-    .setTitle(
-      turnResult.won
-        ? `🎉 GIẢI MÃ THÀNH CÔNG CON SỐ #${turnResult.secret}!`
-        : `💥 HẾT LƯỢT DỰ ĐOÁN — SỐ BÍ MẬT LÀ #${turnResult.secret}`
-    )
-    .setDescription(
-      [
-        `• **Chế độ:** ${turnResult.mode.label}`,
-        `• **Hành trình đoán (${turnResult.attemptsUsed}/${turnResult.maxAttempts} lượt):** ${trail}`,
-        `• **Con số bí mật của Bot:** **#${turnResult.secret}**`,
-        turnResult.won
-          ? `🏆 **Tiền thưởng nhận về:** **${formatVnd(turnResult.payout)}** *(Lãi ròng: +${formatVnd(turnResult.net)})*`
-          : `💸 **Kết quả:** Hết lượt đoán, mất tiền cược **${formatVnd(turnResult.totalBet)}**`,
-        `💰 **Số dư ví mới:** **${formatVnd(turnResult.balanceAfter)}**`,
-      ].join('\n')
-    )
-    .setImage(banner.url)
-    .setTimestamp();
+  const resultContainer = createContainer({
+    accentColor: turnResult.won ? THEME.CYBER_EMERALD : THEME.CRIMSON_NEON,
+    children: [
+      mediaGallery([{ url: banner.url, description: turnResult.won ? 'Giải mã thành công' : 'Hết lượt giải mã' }]),
+      textDisplay(
+        `## ${turnResult.won ? `🎉 GIẢI MÃ THÀNH CÔNG CON SỐ #${turnResult.secret}!` : `💥 HẾT LƯỢT — SỐ BÍ MẬT LÀ #${turnResult.secret}`}\n` +
+          `• **Chế độ:** ${turnResult.mode.label}\n` +
+          `• **Hành trình đoán (${turnResult.attemptsUsed}/${turnResult.maxAttempts} lượt):** ${trail}\n` +
+          `• **Thanh toán:** ${
+            turnResult.won
+              ? `🏆 Nhận về **${formatVnd(turnResult.payout)}** *(Lãi ròng +${formatVnd(turnResult.net)})*`
+              : `💸 Mất tiền cược **-${formatVnd(turnResult.totalBet)}**`
+          }\n` +
+          `• **Số dư ví mới:** **${formatVnd(turnResult.balanceAfter)}**`
+      ),
+      separator(),
+      buildPostGameRow({ replayCustomId: `vgame:guess:open:${user.id}`, userId: user.id }),
+    ],
+  });
 
-  await editFn({
-    embeds: [doneEmbed],
+  const finalPayload = buildCv2Payload({
+    containers: [resultContainer],
     files: [banner.attachment],
-    components: [buildPostGameRow({ replayCustomId: `vgame:guess:open:${user.id}`, userId: user.id })],
+  });
+
+  await globalAnimationManager.runStagedAnimation({
+    scopeKey: `guess:${user.id}`,
+    editFn,
+    stages: [{ payload: openStage, delayMs: 800 }],
+    finalPayload,
   });
 }
 
 // ============================================================================
-// 6. ĐỒNG BỘ GIAO DIỆN HÌNH ẢNH: ĐUA THÚ TỐC ĐỘ (/race — ĐƯỜNG ĐUA TỪNG CHẶNG)
+// 6. ĐUA THÚ PRO MAX (COMPONENTS V2 – 5 HÌNH THÚ, ĐƯỜNG ĐUA TIẾN TRÌNH & KẾT QUẢ)
 // ============================================================================
 
-export function buildRaceBoardPayload(user, systems) {
+export function buildRaceBoardPayload(user, systems, { ephemeral = false } = {}) {
   systems.gameSystem.touchActivePlayer(GAME_IDS.RACE, user.id);
   const wallet = systems.economySystem.ensureUser(user.id, user.username).wallet;
   const { minBet, maxBet } = getBetBounds(systems.db);
@@ -833,27 +1066,31 @@ export function buildRaceBoardPayload(user, systems) {
   const betAmount = draft.betAmount || Math.max(minBet, 1_000);
 
   const chosen = RACE_ANIMALS.find((a) => a.id === animalId) || RACE_ANIMALS[0];
-  const banner = buildAssetAttachment(ASSET_PATHS.GAME_RACE, 'race_banner.png');
-  const animalThumb = buildAssetAttachment(
-    ASSET_PATHS.RACE_ANIMAL[chosen.id],
-    `racer_${chosen.id}.png`
-  );
+  const rosterGallery = buildRaceRosterGalleryAssets(chosen.id);
   const choiceLabel = `${chosen.emoji} **${chosen.name}** *(Về Nhất nhận thưởng **4.5x** tiền cược)*`;
   const canConfirm = betAmount >= minBet && betAmount <= maxBet && wallet >= betAmount;
 
-  const embed = new EmbedBuilder()
-    .setColor(COLORS.SUCCESS)
-    .setTitle('🐎 TRƯỜNG ĐUA THÚ TỐC ĐỘ PRO – CHỌN CHIẾN THÚ & ĐẶT CƯỢC')
-    .setDescription(formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel }))
-    .setThumbnail(animalThumb.url)
-    .setImage(banner.url)
-    .setTimestamp();
+  const trackPreview = RACE_ANIMALS.map(
+    (a, idx) =>
+      `\`Làn ${idx + 1}\` ${a.emoji} **${a.name}** ${a.id === chosen.id ? '⭐ *(Đang chọn)*' : ''} — \`${renderNeonBar(0, 10, 8)}\` 🏁`
+  ).join('\n');
+
+  const paddockContainer = createContainer({
+    accentColor: THEME.CYBER_EMERALD,
+    children: [
+      textDisplay(`## 🐎 TRƯỜNG ĐUA THÚ TỐC ĐỘ GRAND PRIX (THƯỞNG 4.5X)`),
+      mediaGallery(rosterGallery.items),
+      separator(),
+      textDisplay(`${trackPreview}\n\n${formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel })}`),
+    ],
+  });
 
   const animalRow = new ActionRowBuilder().addComponents(
     ...RACE_ANIMALS.map((a) =>
       new ButtonBuilder()
         .setCustomId(`vgame:race:pick:${user.id}:${a.id}`)
-        .setLabel(`${a.emoji} ${a.name}`)
+        .setEmoji(a.emoji)
+        .setLabel(a.name)
         .setStyle(chosen.id === a.id ? ButtonStyle.Success : ButtonStyle.Secondary)
     )
   );
@@ -863,14 +1100,19 @@ export function buildRaceBoardPayload(user, systems) {
     userId: user.id,
     selectedBet: betAmount,
     canConfirm,
-    confirmLabel: 'Xác nhận Xuất Phát',
+    confirmLabel: 'Xuất Phát Đua',
   });
 
-  return {
-    embeds: [embed],
-    files: [banner.attachment, animalThumb.attachment],
-    components: [animalRow, ...bettingRows],
-  };
+  const controlContainer = createContainer({
+    accentColor: THEME.NEON_PURPLE,
+    children: [animalRow, separator(), ...bettingRows],
+  });
+
+  return buildCv2Payload({
+    containers: [paddockContainer, controlContainer],
+    files: rosterGallery.files,
+    ephemeral,
+  });
 }
 
 async function runRaceConfirmedRound(editFn, user, animalId, betAmount, systems) {
@@ -884,33 +1126,27 @@ async function runRaceConfirmedRound(editFn, user, animalId, betAmount, systems)
   clearBettingDraft(GAME_IDS.RACE, user.id);
   systems.gameSystem.releaseActivePlayer(GAME_IDS.RACE, user.id);
 
-  // Chặng 1 & Chặng 2: Diễn biến đường đua trực tiếp (TUYỆT ĐỐI KHÔNG HIỆN KẾT QUẢ NGAY)
-  const runGif = buildAssetAttachment(ASSET_PATHS.RACE_RUN_GIF, 'race_run.gif');
-  const stage1Embed = new EmbedBuilder()
-    .setColor(COLORS.WARNING)
-    .setTitle('🔫 PHÁO HIỆU NỔ! CHẶNG 1/3 — XUẤT PHÁT RỜI CỔNG!')
-    .setDescription(
-      `👤 <@${user.id}> đặt **${formatVnd(res.totalBet)}** cho **${res.chosen.emoji} ${res.chosen.name}** ⭐\n\n` +
-      res.frames[0]
-    )
-    .setImage(runGif.url);
+  const makeStagePayload = (stageIdx, headline, color) => {
+    const runGif = buildAssetAttachment(ASSET_PATHS.RACE_RUN_GIF, 'race_run.gif');
+    return buildCv2Payload({
+      containers: [
+        createContainer({
+          accentColor: color,
+          children: [
+            textDisplay(
+              `## ${headline}\n` +
+                `👤 <@${user.id}> đặt **${formatVnd(res.totalBet)}** cho **${res.chosen.emoji} ${res.chosen.name}** ⭐\n` +
+                `📊 Tiến trình chặng: \`${renderNeonBar(stageIdx + 1, 3, 9)}\`\n\n` +
+                res.frames[stageIdx]
+            ),
+            mediaGallery([{ url: runGif.url, description: 'Các chiến thú đang bứt tốc trên đường đua' }]),
+          ],
+        }),
+      ],
+      files: [runGif.attachment],
+    });
+  };
 
-  await editFn({ embeds: [stage1Embed], files: [runGif.attachment], components: [] });
-  await sleep(950);
-
-  const stage2Embed = new EmbedBuilder()
-    .setColor(COLORS.GOLD)
-    .setTitle('🔥 CHẶNG 2/3 — TĂNG TỐC KHÚC CUA QUYẾT ĐỊNH!')
-    .setDescription(
-      `👤 <@${user.id}> đang cổ vũ **${res.chosen.emoji} ${res.chosen.name}** ⭐ (Tổng cược: **${formatVnd(res.totalBet)}**)\n\n` +
-      res.frames[1]
-    )
-    .setImage(runGif.url);
-
-  await editFn({ embeds: [stage2Embed] });
-  await sleep(950);
-
-  // Chặng cuối: Cán đích & Bảng xếp hạng chung cuộc #1..#5
   const winnerCard = buildAssetAttachment(
     ASSET_PATHS.RACE_ANIMAL[res.winner.id],
     `winner_${res.winner.id}.png`
@@ -921,33 +1157,48 @@ async function runRaceConfirmedRound(editFn, user, animalId, betAmount, systems)
   );
   const medals = ['🥇 Hạng 1', '🥈 Hạng 2', '🥉 Hạng 3', '4️⃣ Hạng 4', '5️⃣ Hạng 5'];
   const podiumLines = res.standings.map(
-    (a, idx) => `${medals[idx]}: **${a.emoji} ${a.name}**${a.id === res.chosen.id ? ' *(Bạn chọn)*' : ''}`
+    (a, idx) => `${medals[idx]}: **${a.emoji} ${a.name}**${a.id === res.chosen.id ? ' ⭐ *(Bạn chọn)*' : ''}`
   );
 
-  const finalEmbed = new EmbedBuilder()
-    .setColor(res.won ? COLORS.SUCCESS : COLORS.DANGER)
-    .setTitle(`🏁 KẾT QUẢ CHUNG CUỘC — ${res.winner.emoji} ${res.winner.name.toUpperCase()} VÔ ĐỊCH!`)
-    .setDescription(
-      [
-        res.frames[2],
-        '',
-        '🏆 **Bảng Thứ Hạng Cán Đích:**',
-        ...podiumLines,
-        '',
-        res.won
-          ? `🎉 **THẮNG ĐẬM (4.5x):** Nhận về **${formatVnd(res.payout)}** *(Lãi ròng +${formatVnd(res.net)})*`
-          : `💸 **CHƯA TRÚNG:** Chiến thú bạn chọn chưa về nhất (-${formatVnd(res.totalBet)})`,
-        `💰 **Số dư ví mới:** **${formatVnd(res.balanceAfter)}**`,
-      ].join('\n')
-    )
-    .setThumbnail(winnerCard.url)
-    .setImage(banner.url)
-    .setTimestamp();
+  const finalContainer = createContainer({
+    accentColor: res.won ? THEME.CYBER_EMERALD : THEME.CRIMSON_NEON,
+    children: [
+      sectionWithThumbnail({
+        texts: [
+          `## 🏁 CHUNG CUỘC: ${res.winner.emoji} ${res.winner.name.toUpperCase()} VỀ NHẤT!`,
+          res.frames[2],
+        ],
+        url: winnerCard.url,
+        description: `Quán quân ${res.winner.name}`,
+      }),
+      mediaGallery([{ url: banner.url, description: res.won ? 'Chiến thắng Đua Thú' : 'Kết quả Đua Thú' }]),
+      separator(),
+      textDisplay(
+        `### 🏆 Bảng Vị Trí Cán Đích & Thanh Toán\n` +
+          `${podiumLines.join('\n')}\n\n` +
+          (res.won
+            ? `🎉 **THẮNG ĐẬM 4.5X:** Nhận **${formatVnd(res.payout)}** *(Lãi ròng +${formatVnd(res.net)})*`
+            : `💸 **CHƯA TRÚNG:** Thú bạn chọn chưa về nhất (-${formatVnd(res.totalBet)})`) +
+          `\n💰 **Số dư ví mới:** **${formatVnd(res.balanceAfter)}**`
+      ),
+      separator(),
+      buildPostGameRow({ replayCustomId: `vgame:race:open:${user.id}`, userId: user.id }),
+    ],
+  });
 
-  await editFn({
-    embeds: [finalEmbed],
+  const finalPayload = buildCv2Payload({
+    containers: [finalContainer],
     files: [winnerCard.attachment, banner.attachment],
-    components: [buildPostGameRow({ replayCustomId: `vgame:race:open:${user.id}`, userId: user.id })],
+  });
+
+  await globalAnimationManager.runStagedAnimation({
+    scopeKey: `race:${user.id}`,
+    editFn,
+    stages: [
+      { payload: makeStagePayload(0, '🔫 CHẶNG 1/3 — RỜI CỔNG XUẤT PHÁT!', THEME.AMBER_PULSE), delayMs: 850 },
+      { payload: makeStagePayload(1, '🔥 CHẶNG 2/3 — BỨT TỐC KHÚC CUA QUYẾT ĐỊNH!', THEME.NEON_GOLD), delayMs: 850 },
+    ],
+    finalPayload,
   });
 }
 
@@ -955,35 +1206,35 @@ async function runRaceConfirmedRound(editFn, user, animalId, betAmount, systems)
 // HÀM MỞ NHANH BÀN CHƠI TỪ GAME CENTER (/games)
 // ============================================================================
 
-export function openVisualGameLauncher(gameId, user, guildId, channelId, systems) {
+export function openVisualGameLauncher(gameId, user, guildId, channelId, systems, opts = {}) {
   switch (gameId) {
     case GAME_IDS.BAUCUA:
-      return buildBauCuaBoardPayload(user, systems);
+      return buildBauCuaBoardPayload(user, systems, opts);
     case GAME_IDS.TAIXIU:
-      return buildTaiXiuBoardPayload(user, systems);
+      return buildTaiXiuBoardPayload(user, systems, opts);
     case GAME_IDS.NOITU:
       return buildNoituLobbyPayload(systems.wordChainSystem, channelId);
     case GAME_IDS.RPS:
-      return buildRpsBoardPayload(user, systems);
+      return buildRpsBoardPayload(user, systems, opts);
     case GAME_IDS.GUESS:
-      return buildGuessBoardPayload(user, systems);
+      return buildGuessBoardPayload(user, systems, opts);
     case GAME_IDS.COINFLIP:
-      return buildCoinflipBoardPayload(user, systems);
+      return buildCoinflipBoardPayload(user, systems, opts);
     case GAME_IDS.RACE:
-      return buildRaceBoardPayload(user, systems);
+      return buildRaceBoardPayload(user, systems, opts);
     default:
-      return buildGameCenterHomePayload(user, guildId, systems);
+      return buildGameCenterHomePayload(user, guildId, systems, opts);
   }
 }
 
 // ============================================================================
-// ĐỊNH NGHĨA CÁC SLASH COMMAND TRÒ CHƠI (/games, /baucua, /taixiu, /coinflip, /guess, /race, /rps, /noitu)
+// ĐỊNH NGHĨA SLASH COMMAND TRÒ CHƠI (/games, /baucua, /taixiu, /coinflip, /guess, /race, /rps, /noitu)
 // ============================================================================
 
 const baucuaCommand = {
   data: new SlashCommandBuilder()
     .setName('baucua')
-    .setDescription('Mở bàn cược hình ảnh Bầu Cua Tôm Cá PRO (chọn nhiều linh vật, nhận thưởng 2x/3x/4x)')
+    .setDescription('Mở bàn cược Components V2 Bầu Cua PRO MAX (lưới 6 linh vật, thưởng 2x/3x/4x)')
     .setContexts(InteractionContextType.Guild)
     .addIntegerOption((o) =>
       o.setName('tien_cuoc_moi_cua').setDescription('Tùy chọn: Mức phỉnh khởi tạo ban đầu (VNĐ)').setMinValue(100)
@@ -992,7 +1243,7 @@ const baucuaCommand = {
   async execute(interaction, ctx) {
     const systems = getSys(ctx);
     systems.gameSystem.assertGameAllowed(GAME_IDS.BAUCUA);
-    const preset = interaction.options.getInteger('tien_cuoc_moi_cua');
+    const preset = interaction.options?.getInteger?.('tien_cuoc_moi_cua');
     if (preset) {
       upsertBettingDraft(GAME_IDS.BAUCUA, interaction.user.id, { activeChip: preset });
     }
@@ -1003,12 +1254,12 @@ const baucuaCommand = {
 const taixiuCommand = {
   data: new SlashCommandBuilder()
     .setName('taixiu')
-    .setDescription('Sòng Tài Xỉu Casino trực quan (Xỉu 4–10, Tài 11–17, Tổng 3/18 Nhà cái thắng)')
+    .setDescription('Sòng Tài Xỉu Casino Components V2 (Xỉu 4–10, Tài 11–17, Tổng 3/18 Nhà cái thắng)')
     .setContexts(InteractionContextType.Guild)
     .addStringOption((o) =>
       o
         .setName('cua')
-        .setDescription('Tùy chọn: Lắc nhanh Tài hoặc Xỉu (bỏ trống để mở Bàn Cược Casino trực quan)')
+        .setDescription('Tùy chọn: Lắc nhanh Tài hoặc Xỉu (bỏ trống để mở Bàn Casino tương tác)')
         .addChoices(
           { name: '🔴 TÀI (11 - 17)', value: 'tai' },
           { name: '🔵 XỈU (4 - 10)', value: 'xiu' }
@@ -1021,8 +1272,8 @@ const taixiuCommand = {
   async execute(interaction, ctx) {
     const systems = getSys(ctx);
     systems.gameSystem.assertGameAllowed(GAME_IDS.TAIXIU);
-    const choice = interaction.options.getString('cua');
-    const bet = interaction.options.getInteger('tien_cuoc');
+    const choice = interaction.options?.getString?.('cua');
+    const bet = interaction.options?.getInteger?.('tien_cuoc');
 
     if (!choice || !bet) {
       if (choice || bet) {
@@ -1037,7 +1288,7 @@ const taixiuCommand = {
 
     await interaction.deferReply();
     await runTaiXiuConfirmedRound(
-      (payload) => interaction.editReply(payload),
+      makeEditAdapter(interaction),
       interaction.user,
       choice,
       bet,
@@ -1049,7 +1300,7 @@ const taixiuCommand = {
 const coinflipCommand = {
   data: new SlashCommandBuilder()
     .setName('coinflip')
-    .setDescription('Tung đồng xu Hoàng Kim Sấp / Ngửa với bảng cược tương tác & hiệu ứng xoay xu')
+    .setDescription('Tung đồng xu Hoàng Kim Sấp / Ngửa giao diện Components V2 & hiệu ứng xoay xu')
     .setContexts(InteractionContextType.Guild)
     .addStringOption((o) =>
       o
@@ -1067,8 +1318,8 @@ const coinflipCommand = {
   async execute(interaction, ctx) {
     const systems = getSys(ctx);
     systems.gameSystem.assertGameAllowed(GAME_IDS.COINFLIP);
-    const side = interaction.options.getString('chon');
-    const bet = interaction.options.getInteger('tien_cuoc');
+    const side = interaction.options?.getString?.('chon');
+    const bet = interaction.options?.getInteger?.('tien_cuoc');
 
     if (!side || !bet) {
       if (side || bet) {
@@ -1083,7 +1334,7 @@ const coinflipCommand = {
 
     await interaction.deferReply();
     await runCoinflipConfirmedRound(
-      (payload) => interaction.editReply(payload),
+      makeEditAdapter(interaction),
       interaction.user,
       side,
       bet,
@@ -1095,7 +1346,7 @@ const coinflipCommand = {
 const guessCommand = {
   data: new SlashCommandBuilder()
     .setName('guess')
-    .setDescription('Giải mã con số bí mật của Bot với giới hạn lượt đoán & gợi ý Lớn Hơn / Nhỏ Hơn')
+    .setDescription('Giải mã con số bí mật của Bot (Components V2 – gợi ý Lớn Hơn/Nhỏ Hơn & thanh tiến trình)')
     .setContexts(InteractionContextType.Guild)
     .addStringOption((o) =>
       o
@@ -1114,8 +1365,8 @@ const guessCommand = {
   async execute(interaction, ctx) {
     const systems = getSys(ctx);
     systems.gameSystem.assertGameAllowed(GAME_IDS.GUESS);
-    const diff = interaction.options.getString('do_kho');
-    const bet = interaction.options.getInteger('tien_cuoc');
+    const diff = interaction.options?.getString?.('do_kho');
+    const bet = interaction.options?.getInteger?.('tien_cuoc');
     if (diff || bet) {
       upsertBettingDraft(GAME_IDS.GUESS, interaction.user.id, {
         ...(diff ? { choice: diff } : {}),
@@ -1129,12 +1380,12 @@ const guessCommand = {
 const raceCommand = {
   data: new SlashCommandBuilder()
     .setName('race')
-    .setDescription('Đặt cược Đua Thú Tốc Độ với diễn biến đường đua trực tiếp từng chặng (thưởng 4.5x)')
+    .setDescription('Đặt cược Đua Thú Tốc Độ Components V2 với đường đua tiến trình từng chặng (thưởng 4.5x)')
     .setContexts(InteractionContextType.Guild)
     .addStringOption((o) =>
       o
         .setName('thu_dua')
-        .setDescription('Tùy chọn: Chọn chiến thú (bỏ trống để mở bảng cược hình ảnh)')
+        .setDescription('Tùy chọn: Chọn chiến thú (bỏ trống để mở bảng chọn thú)')
         .addChoices(...RACE_ANIMALS.map((a) => ({ name: `${a.emoji} ${a.name}`, value: a.id })))
     )
     .addIntegerOption((o) =>
@@ -1144,8 +1395,8 @@ const raceCommand = {
   async execute(interaction, ctx) {
     const systems = getSys(ctx);
     systems.gameSystem.assertGameAllowed(GAME_IDS.RACE);
-    const animalId = interaction.options.getString('thu_dua');
-    const bet = interaction.options.getInteger('tien_cuoc');
+    const animalId = interaction.options?.getString?.('thu_dua');
+    const bet = interaction.options?.getInteger?.('tien_cuoc');
 
     if (!animalId || !bet) {
       if (animalId || bet) {
@@ -1160,7 +1411,7 @@ const raceCommand = {
 
     await interaction.deferReply();
     await runRaceConfirmedRound(
-      (payload) => interaction.editReply(payload),
+      makeEditAdapter(interaction),
       interaction.user,
       animalId,
       bet,
@@ -1172,7 +1423,7 @@ const raceCommand = {
 const rpsCommand = {
   data: new SlashCommandBuilder()
     .setName('rps')
-    .setDescription('Oẳn Tù Tì hình ảnh trực quan (Đấu với Bot hoặc Thách đấu Người chơi khác cược VNĐ)')
+    .setDescription('Oẳn Tù Tì Components V2 trực quan (Đấu với Bot hoặc Thách đấu Người chơi khác cược VNĐ)')
     .setContexts(InteractionContextType.Guild)
     .addStringOption((o) =>
       o
@@ -1194,9 +1445,9 @@ const rpsCommand = {
   async execute(interaction, ctx) {
     const systems = getSys(ctx);
     systems.gameSystem.assertGameAllowed(GAME_IDS.RPS);
-    const choice = interaction.options.getString('chon');
-    const bet = interaction.options.getInteger('tien_cuoc');
-    const opponent = interaction.options.getUser('doi_thu');
+    const choice = interaction.options?.getString?.('chon');
+    const bet = interaction.options?.getInteger?.('tien_cuoc');
+    const opponent = interaction.options?.getUser?.('doi_thu');
 
     if (!opponent) {
       if (!choice || !bet) {
@@ -1212,7 +1463,7 @@ const rpsCommand = {
 
       await interaction.deferReply();
       await runRpsBotConfirmedRound(
-        (payload) => interaction.editReply(payload),
+        makeEditAdapter(interaction),
         interaction.user,
         choice,
         bet,
@@ -1221,7 +1472,7 @@ const rpsCommand = {
       return;
     }
 
-    // Chế độ thách đấu Oẳn Tù Tì PvP 1v1 có đặt cược VNĐ
+    // Chế độ thách đấu Oẳn Tù Tì PvP 1v1 có đặt cược VNĐ (Components V2)
     if (!choice || !bet) {
       throw new Error('Khi thách đấu **PvP** với người chơi khác, vui lòng chọn đủ `chon` (Búa/Bao/Kéo) và `tien_cuoc`!');
     }
@@ -1247,25 +1498,38 @@ const rpsCommand = {
       expiresAt: Date.now() + 90_000,
     });
 
-    const banner = buildAssetAttachment(ASSET_PATHS.GAME_RPS, 'rps_pvp.png');
+    const handGallery = buildRpsChoicesGalleryAssets();
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`rps:accept:${cid}:rock`).setLabel('✊ Ra Búa').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`rps:accept:${cid}:paper`).setLabel('🖐️ Ra Bao').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`rps:accept:${cid}:scissors`).setLabel('✌️ Ra Kéo').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`rps:decline:${cid}`).setLabel('❌ Từ chối').setStyle(ButtonStyle.Danger)
+      new ButtonBuilder().setCustomId(`rps:accept:${cid}:rock`).setLabel('Ra Búa').setEmoji('✊').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`rps:accept:${cid}:paper`).setLabel('Ra Bao').setEmoji('🖐️').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`rps:accept:${cid}:scissors`).setLabel('Ra Kéo').setEmoji('✌️').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`rps:decline:${cid}`).setLabel('Từ chối').setEmoji('❌').setStyle(ButtonStyle.Danger)
     );
 
-    const embed = new EmbedBuilder()
-      .setColor(COLORS.GOLD)
-      .setTitle('⚔️ LỜI THÁCH ĐẤU OẲN TÙ TÌ PvP')
-      .setDescription(
-        `<@${interaction.user.id}> thách đấu <@${opponent.id}> một ván **Oẳn Tù Tì**!\n` +
-        `💰 **Mức cược:** **${formatVnd(cleanBet)}**\n` +
-        `⏳ *Lời mời có hiệu lực trong 90 giây. <@${opponent.id}> hãy chọn nước đi bên dưới để mở kết quả đồng thời!*`
-      )
-      .setImage(banner.url);
+    const inviteCard = createContainer({
+      accentColor: THEME.NEON_GOLD,
+      children: [
+        textDisplay(
+          `## ⚔️ LỜI THÁCH ĐẤU OẲN TÙ TÌ PvP 1v1\n` +
+            `📩 <@${opponent.id}> ơi! <@${interaction.user.id}> vừa gửi lời thách đấu **Oẳn Tù Tì**!\n` +
+            `💰 **Mức cược mỗi bên:** **${formatVnd(cleanBet)}**\n` +
+            `⏳ *Hiệu lực 90 giây — <@${opponent.id}> hãy bấm chọn 1 nước bên dưới để đếm ngược mở kết quả đồng thời!*`
+        ),
+        mediaGallery(handGallery.items),
+        separator(),
+        row,
+      ],
+    });
 
-    await sendPanelReply(interaction, ctx, { embeds: [embed], files: [banner.attachment], components: [row] });
+    await sendPanelReply(
+      interaction,
+      ctx,
+      buildCv2Payload({
+        containers: [inviteCard],
+        files: handGallery.files,
+        allowedMentions: { users: [opponent.id] },
+      })
+    );
   },
 };
 
@@ -1282,13 +1546,13 @@ export const GAME_COMMANDS = [
 export const gameCommands = [...GAME_COMMANDS, noituCommand];
 
 // ============================================================================
-// BỘ ĐỊNH TUYẾN TƯƠNG TÁC TRỰC QUAN CHO TẤT CẢ 7 TRÒ CHƠI
+// BỘ ĐỊNH TUYẾN TƯƠNG TÁC COMPONENTS V2 CHO TẤT CẢ 7 TRÒ CHƠI
 // ============================================================================
 
 export async function handleGameComponentInteraction(interaction, ctx) {
   const systems = getSys(ctx);
 
-  // 1. Game Center (/games)
+  // 1. Game Center PRO MAX (/games)
   if (await handleGameCenterInteraction(interaction, ctx, openVisualGameLauncher)) {
     return true;
   }
@@ -1301,10 +1565,7 @@ export async function handleGameComponentInteraction(interaction, ctx) {
   // 3. Xử lý Modal nhập mức cược tùy chỉnh & nhập số dự đoán
   if (interaction.isModalSubmit?.() && interaction.customId?.startsWith('vgame_modal:')) {
     const [, gameId, action, ownerId] = interaction.customId.split(':');
-    if (interaction.user.id !== ownerId) {
-      await interaction.reply({ content: '❌ Hộp nhập này không phải của bạn.', flags: MessageFlags.Ephemeral });
-      return true;
-    }
+    if (!(await verifyPanelOwner(interaction, ownerId, `/${gameId}`))) return true;
 
     if (gameId === GAME_IDS.GUESS && action === 'guess_turn') {
       const rawNum = interaction.fields.getTextInputValue('guess_number');
@@ -1316,14 +1577,22 @@ export async function handleGameComponentInteraction(interaction, ctx) {
           guessNumber: pick,
         });
         if (turnRes.finished) {
-          await interaction.deferUpdate();
-          await renderFinishedGuessRound((p) => interaction.editReply(p), interaction.user, turnRes);
+          await safeDeferUpdate(interaction);
+          await renderFinishedGuessRound(makeEditAdapter(interaction), interaction.user, turnRes);
         } else {
           const sess = systems.gameSystem.getGuessSession(interaction.user.id);
-          await interaction.update(buildActiveGuessTurnPayload(interaction.user, sess, turnRes));
+          await safeUpdateV2(interaction, buildActiveGuessTurnPayload(interaction.user, sess, turnRes));
         }
       } catch (err) {
-        await interaction.reply({ embeds: [errorEmbed('Đoán Số', err.message)], flags: MessageFlags.Ephemeral });
+        await safeReplyV2(
+          interaction,
+          buildCv2NoticePayload({
+            title: '🔢 Dự Đoán Chưa Hợp Lệ',
+            body: err.message,
+            accentColor: THEME.CRIMSON_NEON,
+            ephemeral: true,
+          })
+        );
       }
       return true;
     }
@@ -1334,27 +1603,40 @@ export async function handleGameComponentInteraction(interaction, ctx) {
         const draft = getBettingDraft(GAME_IDS.BAUCUA, interaction.user.id) || { mascotBets: {} };
         const patch = parseMascotCustomInput(rawText, draft.mascotBets || {});
         upsertBettingDraft(GAME_IDS.BAUCUA, interaction.user.id, patch);
-        await interaction.update(buildBauCuaBoardPayload(interaction.user, systems));
+        await safeUpdateV2(interaction, buildBauCuaBoardPayload(interaction.user, systems));
       } catch (err) {
-        await interaction.reply({ embeds: [errorEmbed('Bầu Cua', err.message)], flags: MessageFlags.Ephemeral });
+        await safeReplyV2(
+          interaction,
+          buildCv2NoticePayload({
+            title: '🦀 Nhập Tiền Cửa Bầu Cua Chưa Hợp Lệ',
+            body: err.message,
+            accentColor: THEME.CRIMSON_NEON,
+            ephemeral: true,
+          })
+        );
       }
       return true;
     }
 
-    // Modal mức cược chung cho Tài Xỉu, Đồng Xu, Oẳn Tù Tì, Đoán Số, Đua Thú
     const rawBet = interaction.fields.getTextInputValue('bet_amount');
     const parsed = parseCleanAmount(rawBet);
     const { minBet, maxBet } = getBetBounds(systems.db);
     if (!Number.isSafeInteger(parsed) || parsed < minBet || parsed > maxBet) {
-      await interaction.reply({
-        embeds: [errorEmbed('Mức cược không hợp lệ', `Vui lòng nhập số nguyên từ **${formatVnd(minBet)}** đến **${formatVnd(maxBet)}**!`)],
-        flags: MessageFlags.Ephemeral,
-      });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '⚠️ Mức Cược Ngoài Giới Hạn',
+          body: `Vui lòng nhập số nguyên từ **${formatVnd(minBet)}** đến **${formatVnd(maxBet)}**!`,
+          accentColor: THEME.CRIMSON_NEON,
+          ephemeral: true,
+        })
+      );
       return true;
     }
 
     upsertBettingDraft(gameId, interaction.user.id, { betAmount: parsed });
-    await interaction.update(
+    await safeUpdateV2(
+      interaction,
       openVisualGameLauncher(gameId, interaction.user, interaction.guildId, interaction.channelId, systems)
     );
     return true;
@@ -1368,51 +1650,103 @@ export async function handleGameComponentInteraction(interaction, ctx) {
     const ownerId = parts[3];
     const arg = parts[4];
 
-    if (interaction.user.id !== ownerId) {
-      await interaction.reply({
-        content: '❌ Bàn cược này thuộc về người chơi khác! Hãy gõ lệnh để mở bàn riêng của bạn.',
-        flags: MessageFlags.Ephemeral,
-      });
+    if (!(await verifyPanelOwner(interaction, ownerId, `/${gameId}`))) {
       return true;
     }
 
     const { minBet, maxBet } = getBetBounds(systems.db);
     const wallet = systems.economySystem.ensureUser(interaction.user.id, interaction.user.username).wallet;
 
+    if (action === 'close') {
+      clearBettingDraft(gameId, ownerId);
+      systems.gameSystem.releaseActivePlayer(gameId, ownerId);
+      await safeClosePanel(interaction, interaction.user.username);
+      return true;
+    }
+
     if (action === 'cancel') {
-      clearBettingDraft(gameId, interaction.user.id);
-      systems.gameSystem.releaseActivePlayer(gameId, interaction.user.id);
-      const cancelledEmbed = new EmbedBuilder()
-        .setColor(COLORS.MUTED)
-        .setTitle('🛑 ĐÃ HỦY PHIÊN ĐẶT CƯỢC')
-        .setDescription('Chưa có khoản tiền VNĐ nào bị trừ khỏi ví của bạn.');
-      await interaction.update({
-        embeds: [cancelledEmbed],
-        files: [],
-        components: [buildPostGameRow({ replayCustomId: `vgame:${gameId}:open:${ownerId}`, userId: ownerId })],
-      });
+      globalAnimationManager.bumpSession(`${gameId}:${ownerId}`);
+      clearBettingDraft(gameId, ownerId);
+      systems.gameSystem.releaseActivePlayer(gameId, ownerId);
+      await safeUpdateV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '🛑 Đã Hủy Phiên Đặt Cược',
+          body: 'Chưa có bất kỳ khoản tiền VNĐ nào bị trừ khỏi ví của bạn.',
+          accentColor: THEME.SLATE_DARK,
+          clearAttachments: true,
+          actionRows: [
+            buildPostGameRow({
+              replayCustomId: `vgame:${gameId}:open:${ownerId}`,
+              userId: ownerId,
+            }),
+          ],
+        })
+      );
       return true;
     }
 
     if (action === 'back') {
-      clearBettingDraft(gameId, interaction.user.id);
-      systems.gameSystem.releaseActivePlayer(gameId, interaction.user.id);
-      await interaction.update(
+      globalAnimationManager.bumpSession(`${gameId}:${ownerId}`);
+      clearBettingDraft(gameId, ownerId);
+      systems.gameSystem.releaseActivePlayer(gameId, ownerId);
+      await safeUpdateV2(
+        interaction,
         buildGameCenterHomePayload(interaction.user, interaction.guildId, systems)
       );
       return true;
     }
 
     if (action === 'open') {
-      await interaction.update(
+      upsertBettingDraft(gameId, ownerId, { resetSession: true });
+      await safeUpdateV2(
+        interaction,
         openVisualGameLauncher(gameId, interaction.user, interaction.guildId, interaction.channelId, systems)
+      );
+      return true;
+    }
+
+    if (action === 'private') {
+      await safeReplyV2(
+        interaction,
+        openVisualGameLauncher(gameId, interaction.user, interaction.guildId, interaction.channelId, systems, {
+          ephemeral: true,
+        })
+      );
+      return true;
+    }
+
+    // Kiểm tra phiên đặt cược hết hạn (TTL 10 phút) khi bấm Xác nhận
+    const draftCheck = inspectBettingDraft(gameId, ownerId);
+    if (draftCheck.expired && action === 'confirm') {
+      await safeUpdateV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '⏰ Phiên Đặt Cược Đã Hết Hạn',
+          body: 'Bảng đặt cược này đã quá 10 phút không thao tác nên được khóa bảo vệ số dư. Hãy bấm **Chơi lại** để mở bàn mới!',
+          accentColor: THEME.AMBER_PULSE,
+          clearAttachments: true,
+          actionRows: [
+            buildPostGameRow({
+              replayCustomId: `vgame:${gameId}:open:${ownerId}`,
+              userId: ownerId,
+            }),
+          ],
+        })
       );
       return true;
     }
 
     // --- Xử lý riêng Bầu Cua đa cửa ---
     if (gameId === GAME_IDS.BAUCUA) {
-      const draft = getBettingDraft(GAME_IDS.BAUCUA, ownerId) || upsertBettingDraft(GAME_IDS.BAUCUA, ownerId, {});
+      const draft = draftCheck.draft || upsertBettingDraft(GAME_IDS.BAUCUA, ownerId, {});
+
+      if (action === 'rebet') {
+        const prevStakes = getLastBauCuaStakes(ownerId) || {};
+        upsertBettingDraft(GAME_IDS.BAUCUA, ownerId, { mascotBets: { ...prevStakes }, resetSession: true });
+        await safeUpdateV2(interaction, buildBauCuaBoardPayload(interaction.user, systems));
+        return true;
+      }
 
       if (action === 'chip') {
         if (arg === 'all') {
@@ -1429,7 +1763,7 @@ export async function handleGameComponentInteraction(interaction, ctx) {
         } else {
           upsertBettingDraft(GAME_IDS.BAUCUA, ownerId, { activeChip: Number(arg) });
         }
-        await interaction.update(buildBauCuaBoardPayload(interaction.user, systems));
+        await safeUpdateV2(interaction, buildBauCuaBoardPayload(interaction.user, systems));
         return true;
       }
 
@@ -1438,21 +1772,26 @@ export async function handleGameComponentInteraction(interaction, ctx) {
         const chip = draft.activeChip || Math.max(minBet, 1_000);
         const nextTotal = Object.values(mascotBets).reduce((s, v) => s + v, 0) + chip;
         if (nextTotal > maxBet) {
-          await interaction.reply({
-            content: `⚠️ Tổng cược không được vượt quá **${formatVnd(maxBet)}**! Bấm **🧹 Xóa chọn** để đặt lại.`,
-            flags: MessageFlags.Ephemeral,
-          });
+          await safeReplyV2(
+            interaction,
+            buildCv2NoticePayload({
+              title: '⚠️ Đạt Trần Tổng Cược Bầu Cua',
+              body: `Tổng cược không được vượt quá **${formatVnd(maxBet)}**! Bấm **🧹 Xóa chọn** để đặt lại nhé.`,
+              accentColor: THEME.AMBER_PULSE,
+              ephemeral: true,
+            })
+          );
           return true;
         }
         mascotBets[arg] = (mascotBets[arg] || 0) + chip;
         upsertBettingDraft(GAME_IDS.BAUCUA, ownerId, { mascotBets });
-        await interaction.update(buildBauCuaBoardPayload(interaction.user, systems));
+        await safeUpdateV2(interaction, buildBauCuaBoardPayload(interaction.user, systems));
         return true;
       }
 
       if (action === 'clear') {
         upsertBettingDraft(GAME_IDS.BAUCUA, ownerId, { mascotBets: {} });
-        await interaction.update(buildBauCuaBoardPayload(interaction.user, systems));
+        await safeUpdateV2(interaction, buildBauCuaBoardPayload(interaction.user, systems));
         return true;
       }
 
@@ -1479,34 +1818,43 @@ export async function handleGameComponentInteraction(interaction, ctx) {
           if (Object.keys(betsMap).length === 0) {
             throw new Error('Bạn chưa chọn linh vật nào để lắc!');
           }
-          await interaction.deferUpdate();
+          await safeDeferUpdate(interaction);
           await runBauCuaConfirmedRound(
-            (p) => interaction.editReply(p),
+            makeEditAdapter(interaction),
             interaction.user,
             betsMap,
             systems
           );
         });
         if (lockRes.locked) {
-          await interaction.reply({ content: '⏳ Đang xử lý xác nhận cược, vui lòng chờ...', flags: MessageFlags.Ephemeral });
+          await safeReplyV2(
+            interaction,
+            buildCv2NoticePayload({
+              title: '⏳ Đang Lắc Xúc Xắc',
+              body: 'Ván Bầu Cua của bạn đang được xử lý, vui lòng chờ giây lát!',
+              accentColor: THEME.AMBER_PULSE,
+              ephemeral: true,
+            })
+          );
         }
         return true;
       }
     }
 
-    // --- Xử lý nút Nhập Số Dự Đoán trong phiên Đoán Số nhiều lượt ---
+    // --- Xử lý nút Nhập Số / Đoán Nhanh trong phiên Đoán Số nhiều lượt ---
     if (gameId === GAME_IDS.GUESS && action === 'input') {
       const sess = systems.gameSystem.getGuessSession(ownerId);
       if (!sess) {
-        await interaction.update(buildGuessBoardPayload(interaction.user, systems));
+        await safeUpdateV2(interaction, buildGuessBoardPayload(interaction.user, systems));
         return true;
       }
+      const { low, high } = computeNarrowedBounds(sess);
       const modal = new ModalBuilder()
         .setCustomId(`vgame_modal:guess:guess_turn:${ownerId}`)
-        .setTitle(`Đoán Số (1 – ${sess.mode.max})`);
+        .setTitle(`Đoán Số (${low} – ${high})`);
       const input = new TextInputBuilder()
         .setCustomId('guess_number')
-        .setLabel(`Nhập dự đoán từ 1 đến ${sess.mode.max}`)
+        .setLabel(`Nhập dự đoán từ ${low} đến ${high}`)
         .setStyle(TextInputStyle.Short)
         .setPlaceholder(`Còn ${sess.maxAttempts - sess.attemptsUsed} lượt`)
         .setRequired(true)
@@ -1516,10 +1864,33 @@ export async function handleGameComponentInteraction(interaction, ctx) {
       return true;
     }
 
+    if (gameId === GAME_IDS.GUESS && action === 'quick') {
+      const sess = systems.gameSystem.getGuessSession(ownerId);
+      if (!sess) {
+        await safeUpdateV2(interaction, buildGuessBoardPayload(interaction.user, systems));
+        return true;
+      }
+      const pick = Number(arg);
+      const turnRes = systems.gameSystem.submitGuessTurn({
+        userId: ownerId,
+        username: interaction.user.username,
+        guessNumber: pick,
+      });
+      if (turnRes.finished) {
+        await safeDeferUpdate(interaction);
+        await renderFinishedGuessRound(makeEditAdapter(interaction), interaction.user, turnRes);
+      } else {
+        const updatedSess = systems.gameSystem.getGuessSession(ownerId);
+        await safeUpdateV2(interaction, buildActiveGuessTurnPayload(interaction.user, updatedSess, turnRes));
+      }
+      return true;
+    }
+
     // --- Xử lý chung cho Tài Xỉu, Đồng Xu, Oẳn Tù Tì, Đoán Số, Đua Thú ---
     if (action === 'pick') {
       upsertBettingDraft(gameId, ownerId, { choice: arg });
-      await interaction.update(
+      await safeUpdateV2(
+        interaction,
         openVisualGameLauncher(gameId, interaction.user, interaction.guildId, interaction.channelId, systems)
       );
       return true;
@@ -1528,7 +1899,8 @@ export async function handleGameComponentInteraction(interaction, ctx) {
     if (action === 'chip') {
       const nextBet = arg === 'all' ? computeAllInAmount(wallet, minBet, maxBet) : Number(arg);
       upsertBettingDraft(gameId, ownerId, { betAmount: nextBet });
-      await interaction.update(
+      await safeUpdateV2(
+        interaction,
         openVisualGameLauncher(gameId, interaction.user, interaction.guildId, interaction.channelId, systems)
       );
       return true;
@@ -1561,12 +1933,12 @@ export async function handleGameComponentInteraction(interaction, ctx) {
           });
           clearBettingDraft(GAME_IDS.GUESS, ownerId);
           const sess = systems.gameSystem.getGuessSession(ownerId);
-          await interaction.update(buildActiveGuessTurnPayload(interaction.user, sess));
+          await safeUpdateV2(interaction, buildActiveGuessTurnPayload(interaction.user, sess));
           return;
         }
 
-        await interaction.deferUpdate();
-        const editFn = (p) => interaction.editReply(p);
+        await safeDeferUpdate(interaction);
+        const editFn = makeEditAdapter(interaction);
         if (gameId === GAME_IDS.TAIXIU) {
           await runTaiXiuConfirmedRound(editFn, interaction.user, draft.choice || 'tai', betAmount, systems);
         } else if (gameId === GAME_IDS.COINFLIP) {
@@ -1579,13 +1951,21 @@ export async function handleGameComponentInteraction(interaction, ctx) {
       });
 
       if (lockRes.locked) {
-        await interaction.reply({ content: '⏳ Ván cược đang được khóa xử lý, vui lòng chờ...', flags: MessageFlags.Ephemeral });
+        await safeReplyV2(
+          interaction,
+          buildCv2NoticePayload({
+            title: '⏳ Đang Xử Lý Lượt Chơi',
+            body: 'Ván cược đang được khóa an toàn để tránh trừ tiền 2 lần, vui lòng chờ!',
+            accentColor: THEME.AMBER_PULSE,
+            ephemeral: true,
+          })
+        );
       }
       return true;
     }
   }
 
-  // 5. Xử lý thách đấu Oẳn Tù Tì PvP có hiệu ứng đếm ngược & hình ảnh
+  // 5. Xử lý thách đấu Oẳn Tù Tì PvP 1v1 (Components V2 – Đếm ngược & Kết quả 2 người chơi)
   if (interaction.customId?.startsWith('rps:')) {
     sweepRpsChallenges();
     const parts = interaction.customId.split(':');
@@ -1594,26 +1974,42 @@ export async function handleGameComponentInteraction(interaction, ctx) {
     const ch = rpsChallenges.get(cid);
 
     if (!ch) {
-      await interaction.update({
-        embeds: [errorEmbed('Hết hạn thách đấu', 'Lời thách đấu Oẳn Tù Tì này đã hết hạn 90 giây.')],
-        files: [],
-        components: [],
-      });
+      await safeUpdateV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '⏰ Lời Thách Đấu Đã Hết Hạn',
+          body: 'Lời thách đấu Oẳn Tù Tì PvP này đã quá 90 giây hiệu lực.',
+          accentColor: THEME.SLATE_DARK,
+          clearAttachments: true,
+        })
+      );
       return true;
     }
 
     if (interaction.user.id !== ch.p2Id) {
-      await interaction.reply({ content: '❌ Chỉ người được thách đấu mới có thể bấm nút này!', flags: MessageFlags.Ephemeral });
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '⛔ Không Đúng Đối Thủ Được Mời',
+          body: `Chỉ <@${ch.p2Id}> mới có quyền nhận hoặc từ chối lời thách đấu này!`,
+          accentColor: THEME.CRIMSON_NEON,
+          ephemeral: true,
+        })
+      );
       return true;
     }
 
     rpsChallenges.delete(cid);
     if (action === 'decline') {
-      const decEmbed = new EmbedBuilder()
-        .setColor(COLORS.MUTED)
-        .setTitle('🏳️ ĐÃ TỪ CHỐI THÁCH ĐẤU OẲN TÙ TÌ')
-        .setDescription(`<@${ch.p2Id}> đã từ chối lời mời của <@${ch.p1Id}>.`);
-      await interaction.update({ embeds: [decEmbed], files: [], components: [] });
+      await safeUpdateV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '🏳️ Đã Từ Chối Thách Đấu Oẳn Tù Tì',
+          body: `<@${ch.p2Id}> đã từ chối lời mời của <@${ch.p1Id}>. Chưa có khoản VNĐ nào bị trừ.`,
+          accentColor: THEME.SLATE_DARK,
+          clearAttachments: true,
+        })
+      );
       return true;
     }
 
@@ -1628,34 +2024,62 @@ export async function handleGameComponentInteraction(interaction, ctx) {
       bet: ch.bet,
     });
 
-    await interaction.deferUpdate();
+    await safeDeferUpdate(interaction);
+    const editFn = makeEditAdapter(interaction);
+
     const cdGif = buildAssetAttachment(ASSET_PATHS.RPS_COUNTDOWN_GIF, 'rps_pvp_cd.gif');
-    const cdEmbed = new EmbedBuilder()
-      .setColor(COLORS.GOLD)
-      .setTitle('⏳ OẲN TÙ TÌ PvP: 3... 2... 1... MỞ TAY!')
-      .setDescription(`<@${ch.p1Id}> ⚔️ <@${ch.p2Id}> • Mức cược: **${formatVnd(res.bet)}**`)
-      .setImage(cdGif.url);
+    const cdStage = buildCv2Payload({
+      containers: [
+        createContainer({
+          accentColor: THEME.AMBER_PULSE,
+          children: [
+            textDisplay(
+              `## ⏳ OẲN TÙ TÌ PvP: 3... 2... 1... MỞ TAY!\n` +
+                `<@${ch.p1Id}> ⚔️ <@${ch.p2Id}> • Tiền cược mỗi người: **${formatVnd(res.bet)}**`
+            ),
+            mediaGallery([{ url: cdGif.url, description: 'Đếm ngược Oẳn Tù Tì PvP' }]),
+          ],
+        }),
+      ],
+      files: [cdGif.attachment],
+    });
 
-    await interaction.editReply({ embeds: [cdEmbed], files: [cdGif.attachment], components: [] });
-    await sleep(900);
+    const duelGallery = buildRpsDuelGalleryAssets(res.move1, res.move2, ch.p1Name, interaction.user.username);
+    const badge = buildAssetAttachment(ASSET_PATHS.VICTORY_BANNER, 'pvp_result.png');
 
-    const banner = buildAssetAttachment(ASSET_PATHS.VICTORY_BANNER, 'pvp_result.png');
-    const resEmbed = new EmbedBuilder()
-      .setColor(res.outcome === 'tie' ? COLORS.WARNING : COLORS.SUCCESS)
-      .setTitle('⚔️ KẾT QUẢ OẲN TÙ TÌ PvP 1v1')
-      .setDescription(
-        [
-          `• <@${ch.p1Id}> ra: **${res.move1.emoji} ${res.move1.name}**`,
-          `• <@${ch.p2Id}> ra: **${res.move2.emoji} ${res.move2.name}**`,
-          res.outcome === 'tie'
-            ? '🤝 **HÒA NHAU!** Không ai bị trừ tiền.'
-            : `🏆 **NGƯỜI CHIẾN THẮNG:** <@${res.winnerId}> nhận **+${formatVnd(res.bet)}** từ <@${res.loserId}>!`,
-        ].join('\n')
-      )
-      .setImage(banner.url)
-      .setTimestamp();
+    const finalPvp = buildCv2Payload({
+      containers: [
+        createContainer({
+          accentColor: res.outcome === 'tie' ? THEME.NEON_GOLD : THEME.CYBER_EMERALD,
+          children: [
+            sectionWithThumbnail({
+              texts: [
+                `## ⚔️ KẾT QUẢ OẲN TÙ TÌ PvP 1v1`,
+                `• <@${ch.p1Id}> ra: **${res.move1.emoji} ${res.move1.name}**\n` +
+                  `• <@${ch.p2Id}> ra: **${res.move2.emoji} ${res.move2.name}**`,
+              ],
+              url: badge.url,
+              description: 'Kết quả Oẳn Tù Tì PvP',
+            }),
+            mediaGallery(duelGallery.items),
+            separator(),
+            textDisplay(
+              res.outcome === 'tie'
+                ? '🤝 **HÒA NHAU!** Không người chơi nào bị trừ VNĐ.'
+                : `🏆 **NGƯỜI CHIẾN THẮNG:** <@${res.winnerId}> nhận **+${formatVnd(res.bet)}** từ <@${res.loserId}>!`
+            ),
+          ],
+        }),
+      ],
+      files: [...duelGallery.files, badge.attachment],
+    });
 
-    await interaction.editReply({ embeds: [resEmbed], files: [banner.attachment], components: [] });
+    await globalAnimationManager.runStagedAnimation({
+      scopeKey: `rps_pvp:${cid}`,
+      editFn,
+      stages: [{ payload: cdStage, delayMs: 850 }],
+      finalPayload: finalPvp,
+    });
     return true;
   }
 
