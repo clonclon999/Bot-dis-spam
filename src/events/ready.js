@@ -1,5 +1,6 @@
 import { ActivityType } from 'discord.js';
 import { getSlashCommandsJSON } from '../commands/index.js';
+import { warmUpAssetCache } from '../utils/assetRegistry.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -27,6 +28,15 @@ export async function handleClientReady(readyClient, env) {
   } catch (err) {
     logger.warn('ClientReady', 'Không thể đặt trạng thái hiển thị (Presence)', err);
   }
+
+  // 🚀 Làm nóng bộ nhớ đệm ảnh/gif game (bất đồng bộ) để lệnh trò chơi đầu tiên không bị chậm 3 giây.
+  warmUpAssetCache()
+    .then((count) => {
+      logger.info('AssetCache', `Đã nạp sẵn ${count} tệp hình ảnh game vào RAM (loại bỏ độ trễ lần chơi đầu).`);
+    })
+    .catch((err) => {
+      logger.warn('AssetCache', 'Không thể làm nóng bộ nhớ đệm tài nguyên', err);
+    });
 
   if (env.autoDeployCommands) {
     try {

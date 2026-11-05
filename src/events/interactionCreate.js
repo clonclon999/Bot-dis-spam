@@ -6,7 +6,11 @@ import {
   LOG_CATEGORIES,
 } from '../config/constants.js';
 import { buildCv2NoticePayload } from '../ui/componentsV2.js';
-import { safeReplyV2 } from '../ui/interactionHelpers.js';
+import {
+  ensureAcked,
+  installReplyFallback,
+  safeReplyV2,
+} from '../ui/interactionHelpers.js';
 import { THEME } from '../ui/theme.js';
 import { globalGuard } from '../utils/locks.js';
 import { logger, redactSecrets } from '../utils/logger.js';
@@ -14,6 +18,13 @@ import { globalPanelCleaner } from '../utils/panelCleaner.js';
 import { canManageAntiSpam, hasBotRole, isHardcodedOwner } from '../utils/permissions.js';
 
 const ALL_GAME_COMMAND_IDS = new Set(Object.values(GAME_IDS));
+
+// Các lệnh trò chơi nặng (dựng bảng Components V2 + đính kèm nhiều ảnh + giao dịch SQLite):
+// phải ack NGAY để không bao giờ vượt hạn 3 giây của Discord.
+const HEAVY_ACK_COMMAND_IDS = new Set([...ALL_GAME_COMMAND_IDS, 'game']);
+
+// Hạn chót ack an toàn: Discord chỉ cho 3 giây, ta tự ack trước mốc đó ~0.8 giây.
+const ACK_WATCHDOG_MS = 2_200;
 
 /**
  * Xác định mã trò chơi từ Slash Command hoặc Component `customId` (nếu có).
@@ -159,7 +170,15 @@ export async function handleInteractionCreate(interaction, context) {
     return;
   }
 
-  // 5. Khóa Mutex độc quyền trên từng người chơi + Tự động xóa bảng cũ sau khi hiện bảng mới
+  // 5. ⚡ ACK SỚM CHO CÁC LỆNH TRÒ CHƠI NẶNG (Bầu Cua, Tài Xỉu, Đua Thú, /game, Nối Từ, Đoán Số...):
+  // Dựng bảng Components V2 + đính kèm ảnh + mở phiên SQLite có thể vượt 3 giây trên VPS yếu,
+  // nên xác nhận tương tác ngay để Discord không hiện "Ứng dụng không phản hồi".
+  // Mọi phản hồi phía sau đều đi qua `safeReplyV2`/`respondPrimary` nên vẫn hiển thị đúng.
+  if (isChatCmd && HEAVY_ACK_COMMAND_IDS.has(interaction.commandName)) {
+    await ensureAcked(interaction);
+  }
+
+  // 6. Khóa Mutex độc quyền trên từng người chơi + Tự động xóa bảng cũ sau khi hiện bảng mới
   const locked = await globalGuard.runExclusive(userId, async () => {
     if (isChatCmd) {
       const command = COMMAND_MAP.get(interaction.commandName);
@@ -215,8 +234,43 @@ export async function handleInteractionCreate(interaction, context) {
  * Bọc thực thi an toàn không bao giờ làm crash tiến trình Bot.
  */
 export async function safeHandleInteraction(interaction, context) {
+  // Lớp đệm an toàn: nếu tương tác đã được ack/defer trước đó thì `reply` tự chuyển thành `editReply`.
+  installReplyFallback(interaction);
+
+  // 🛡️ ĐỒNG HỒ ACK TỰ ĐỘNG: Discord chỉ cho 3 giây để phản hồi lần đầu.
+  // Nếu vì bất kỳ lý do gì (SQLite bận, mạng chậm, dựng bảng nặng, restart...) mà chưa kịp trả lời,
+  // Bot tự `deferReply()` trước mốc 2.2 giây => KHÔNG BAO GIỜ còn hiện "Ứng dụng không phản hồi".
+  const startedAt = Date.now();
+  let ackedByWatchdog = false;
+  const ackTimer = setTimeout(() => {
+    if (interaction?.deferred || interaction?.replied) return;
+    ackedByWatchdog = true;
+    ensureAcked(interaction).catch(() => {});
+  }, ACK_WATCHDOG_MS);
+  ackTimer.unref?.();
+
   try {
     await handleInteractionCreate(interaction, context);
+
+    // 🧯 Lưới an toàn: handler không trả lời gì (nút cũ/hết hạn/không khớp customId)
+    // => luôn gửi thông báo thay vì để Discord hiện "Ứng dụng không phản hồi".
+    if (
+      interaction &&
+      !interaction.replied &&
+      !interaction.deferred &&
+      typeof interaction.isRepliable === 'function' &&
+      interaction.isRepliable()
+    ) {
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '⌛ Tương Tác Đã Cũ Hoặc Không Còn Hiệu Lực',
+          body: 'Bảng/nút này đã hết hạn hoặc đã được thay thế bởi phiên mới hơn.\n👉 Hãy gõ lại lệnh trò chơi (ví dụ `/baucua`) để mở bảng mới nhất nhé!',
+          accentColor: THEME.AMBER_PULSE,
+          ephemeral: true,
+        })
+      );
+    }
   } catch (err) {
     const rawMsg = err instanceof Error ? err.message : String(err);
     const cleanMsg = redactSecrets(rawMsg);
@@ -246,5 +300,16 @@ export async function safeHandleInteraction(interaction, context) {
         ephemeral: true,
       })
     );
+  } finally {
+    clearTimeout(ackTimer);
+
+    const elapsedMs = Date.now() - startedAt;
+    if (ackedByWatchdog || elapsedMs >= 1_500) {
+      logger.warn(
+        'InteractionLatency',
+        `Tương tác chậm ${elapsedMs}ms (${interaction?.commandName || interaction?.customId || 'unknown'})` +
+          `${ackedByWatchdog ? ' — đã tự động ack bằng deferReply để tránh lỗi "Ứng dụng không phản hồi"' : ''}`
+      );
+    }
   }
 }

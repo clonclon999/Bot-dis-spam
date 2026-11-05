@@ -13,7 +13,9 @@ describe('VNĐ Economy, ACID Transfers, Concurrency Lock & Restart-Safe Bank Int
       const systems = await createBotSystems(tmpDir);
       const { db, economySystem } = systems;
       try {
-        const t0 = Date.now();
+        // Mốc thời gian CỐ ĐỊNH (09:00 giờ Việt Nam) để chuỗi điểm danh không phụ thuộc
+        // vào giờ chạy test — tránh flaky khi chạy vào buổi tối (múi giờ Asia/Ho_Chi_Minh).
+        const t0 = new Date('2026-01-05T02:00:00.000Z').getTime();
         const balA = economySystem.getBalance('u-a', 'Alice');
         assert.equal(balA.wallet, 20_000); // Vốn khởi điểm mặc định 20.000 VNĐ
 

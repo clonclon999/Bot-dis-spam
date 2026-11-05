@@ -136,6 +136,48 @@ export function loadAssetBuffer(relPath) {
 }
 
 /**
+ * 🚀 LÀM NÓNG BỘ NHỚ ĐỆM TÀI NGUYÊN NGAY KHI BOT KHỞI ĐỘNG.
+ *
+ * Trước đây ảnh chỉ được nạp từ đĩa ở lần chơi đầu tiên sau mỗi lần restart => lệnh đầu tiên
+ * (`/baucua`, `/taixiu`...) có thể mất hơn 3 giây và Discord hiện "Ứng dụng không phản hồi".
+ * Hàm này nạp sẵn toàn bộ PNG/GIF tĩnh vào RAM theo từng đợt nhỏ để không chặn sự kiện khác.
+ *
+ * @param {{ batchSize?: number, onBatch?: () => Promise<void> }} [options]
+ * @returns {Promise<number>} Số tệp đã nạp vào bộ nhớ đệm.
+ */
+export async function warmUpAssetCache({ batchSize = 12, onBatch = null } = {}) {
+  const relPaths = [];
+  const walk = (value) => {
+    if (typeof value === 'string') {
+      if (/\.(png|gif|jpg|jpeg)$/i.test(value)) relPaths.push(value);
+      return;
+    }
+    if (value && typeof value === 'object') {
+      for (const child of Object.values(value)) walk(child);
+    }
+  };
+  walk(ASSET_PATHS);
+
+  let loaded = 0;
+  let inBatch = 0;
+  for (const relPath of new Set(relPaths)) {
+    try {
+      loadAssetBuffer(relPath);
+      loaded += 1;
+    } catch {
+      // Tệp thiếu sẽ được báo lỗi rõ ràng khi thực sự dùng tới
+    }
+    inBatch += 1;
+    if (inBatch >= batchSize) {
+      inBatch = 0;
+      if (typeof onBatch === 'function') await onBatch();
+      else await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
+  return loaded;
+}
+
+/**
  * Tạo Discord AttachmentBuilder + URL `attachment://...` để gắn vào Embed.
  */
 export function buildAssetAttachment(relPath, overrideFileName = null) {

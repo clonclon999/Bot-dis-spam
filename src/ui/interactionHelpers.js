@@ -1,3 +1,4 @@
+import { MessageFlags } from 'discord.js';
 import { buildCv2NoticePayload } from './componentsV2.js';
 import { THEME } from './theme.js';
 
@@ -22,6 +23,77 @@ export async function safeReplyV2(interaction, payload) {
     }
     if (typeof interaction.reply === 'function') {
       return await interaction.reply(payload);
+    }
+  } catch (err) {
+    if (!isIgnorableDiscordError(err)) throw err;
+  }
+  return null;
+}
+
+/**
+ * ⚡ CHỐNG LỖI "ỨNG DỤNG KHÔNG PHẢN HỒI" (Discord ack timeout 3 giây):
+ * Gắn lớp đệm cho `interaction.reply` để nếu Interaction đã được `deferReply()` hoặc đã trả lời trước đó
+ * thì tự động chuyển thành `editReply()` thay vì ném lỗi 40060 (Interaction đã được phản hồi).
+ * Nhờ vậy bất kỳ đoạn code cũ nào gọi `interaction.reply()` vẫn chạy đúng dù đã ack sớm.
+ */
+export function installReplyFallback(interaction) {
+  if (!interaction || interaction.__replyFallbackInstalled) return interaction;
+  const originalReply = interaction.reply;
+  if (typeof originalReply !== 'function') return interaction;
+
+  interaction.reply = async function patchedReply(payload, options) {
+    const acked = Boolean(interaction.deferred || interaction.replied);
+    if (acked && typeof interaction.editReply === 'function') {
+      return interaction.editReply(payload, options);
+    }
+    try {
+      return await originalReply.call(this, payload, options);
+    } catch (err) {
+      const code = Number(err?.code ?? err?.rawError?.code ?? 0);
+      if ((code === 40060 || code === 10062) && typeof interaction.editReply === 'function') {
+        return interaction.editReply(payload, options).catch(() => null);
+      }
+      throw err;
+    }
+  };
+
+  interaction.__replyFallbackInstalled = true;
+  return interaction;
+}
+
+/**
+ * Xác nhận (ack) tương tác ngay lập tức bằng `deferReply` nếu chưa trả lời.
+ * Trả về `true` nếu tương tác đã/đang ở trạng thái đã ack.
+ */
+export async function ensureAcked(interaction, { ephemeral = false } = {}) {
+  if (!interaction) return false;
+  if (interaction.deferred || interaction.replied) return true;
+  if (typeof interaction.deferReply !== 'function') return false;
+  try {
+    await interaction.deferReply(
+      ephemeral ? { flags: MessageFlags.Ephemeral } : undefined
+    );
+    return true;
+  } catch (err) {
+    if (isIgnorableDiscordError(err)) return true;
+    return false;
+  }
+}
+
+/**
+ * Gửi phản hồi đầu tiên một cách an toàn tuyệt đối: tự chọn `editReply` (nếu đã defer)
+ * hay `reply` (nếu chưa) và trả về đối tượng tin nhắn đã gửi (nếu Discord trả về).
+ */
+export async function respondPrimary(interaction, payload, { withResponse = true } = {}) {
+  const wantsResponse = withResponse ? { withResponse: true } : {};
+  try {
+    if ((interaction.deferred || interaction.replied) && typeof interaction.editReply === 'function') {
+      const res = await interaction.editReply({ ...payload, ...wantsResponse });
+      return res?.resource?.message ?? res?.message ?? res ?? null;
+    }
+    if (typeof interaction.reply === 'function') {
+      const res = await interaction.reply({ ...payload, ...wantsResponse });
+      return res?.resource?.message ?? res?.message ?? res ?? null;
     }
   } catch (err) {
     if (!isIgnorableDiscordError(err)) throw err;

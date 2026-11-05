@@ -28,7 +28,7 @@ import {
   separator,
   textDisplay,
 } from '../../ui/componentsV2.js';
-import { safeReplyV2, safeUpdateV2 } from '../../ui/interactionHelpers.js';
+import { respondPrimary, safeReplyV2, safeUpdateV2 } from '../../ui/interactionHelpers.js';
 import { THEME } from '../../ui/theme.js';
 import {
   ASSET_PATHS,
@@ -986,11 +986,8 @@ export async function handlePublicStartRoundInteraction(
 
   // Trường hợp người chơi mở phiên ngay tại kênh trò chơi (VD: gõ /baucua ngay trong #bau_cua)
   if (targetChannelId === interaction.channelId) {
-    const replyRes = await interaction.reply({
-      ...boardPayload,
-      withResponse: true,
-    });
-    const sentMsg = replyRes?.resource?.message ?? replyRes ?? null;
+    // `respondPrimary` tự chọn reply/editReply => hoạt động đúng kể cả khi Interaction đã được ack sớm (deferReply).
+    const sentMsg = await respondPrimary(interaction, boardPayload);
     if (sentMsg) {
       systems.multiplayerRoundSystem.registerMessageRef(startRes.round.round_id, sentMsg);
     }
@@ -1046,11 +1043,7 @@ export async function handlePublicStartRoundInteraction(
     return;
   }
 
-  const fallbackRes = await interaction.reply({
-    ...boardPayload,
-    withResponse: true,
-  });
-  const fallbackMsg = fallbackRes?.resource?.message ?? fallbackRes ?? null;
+  const fallbackMsg = await respondPrimary(interaction, boardPayload);
   if (fallbackMsg) {
     systems.multiplayerRoundSystem.registerMessageRef(startRes.round.round_id, fallbackMsg);
   }
