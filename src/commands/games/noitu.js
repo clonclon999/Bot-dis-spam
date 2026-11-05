@@ -2,8 +2,10 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  PermissionsBitField,
   SlashCommandBuilder,
 } from 'discord.js';
+import { BOT_ROLES } from '../../config/constants.js';
 import {
   buildCv2NoticePayload,
   buildCv2Payload,
@@ -18,6 +20,7 @@ import { renderNeonBar, resolveUserAvatarUrl, THEME } from '../../ui/theme.js';
 import { ASSET_PATHS, buildAssetAttachment } from '../../utils/assetRegistry.js';
 import { formatVnd } from '../../utils/format.js';
 import { DEFAULT_RESULT_TTL_MS, globalPanelCleaner } from '../../utils/panelCleaner.js';
+import { hasBotRole } from '../../utils/permissions.js';
 
 export function capitalizeVi(text) {
   const s = String(text ?? '').trim();
@@ -63,22 +66,138 @@ async function editNoituBoardMessage(msg, payload) {
 // GIAO DIỆN NỐI TỪ PRO MAX — DISCORD COMPONENTS V2
 // ============================================================================
 
-export function buildNoituHubPayload(wordChainSystem) {
+export function buildChannelStartPayload(session, { isRestart = false, prevSession = null } = {}) {
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('noitu:chan_stop')
+      .setLabel('Đổi Từ Mới (stop!)')
+      .setEmoji('🔄')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('noitu:hub_stats')
+      .setLabel('Hồ Sơ (nme)')
+      .setEmoji('📊')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('noitu:hub_lb')
+      .setLabel('Xếp Hạng (nrank)')
+      .setEmoji('🏆')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  const headerLine = isRestart
+    ? `## 🔄 ĐÃ ĐỔI LƯỢT MỚI — NỐI TỪ NHIỀU NGƯỜI (VÁN #${session.roundNumber})`
+    : `## 🟢 NỐI TỪ NHIỀU NGƯỜI ĐÃ BẮT ĐẦU! (VÁN #${session.roundNumber})`;
+
+  const prevNote =
+    isRestart && prevSession
+      ? `-# Đã khép lại Ván #${prevSession.roundNumber} (${prevSession.turnCount} lượt nối).\n`
+      : '';
+
+  return buildCv2Payload({
+    containers: [
+      createContainer({
+        accentColor: THEME.CYBER_EMERALD,
+        children: [
+          textDisplay(
+            [
+              headerLine,
+              prevNote +
+                `🎯 **Từ bắt đầu:** **\`${session.currentWord}\`**\n` +
+                `👉 **Hãy gõ từ ghép 2 tiếng bắt đầu bằng:** **\`${capitalizeVi(session.requiredPrefix)} ...\`**`,
+              `-# 💡 Cả kênh cùng chơi không giới hạn số người! Đúng thả ✅ (+VNĐ/từ) • Gõ \`stop!\` khi cả kênh bí từ.`,
+            ].join('\n')
+          ),
+          row,
+        ],
+      }),
+    ],
+    allowedMentions: { parse: [] },
+  });
+}
+
+export function buildChannelWinAndNextPayload(winResult) {
+  const {
+    winnerId,
+    winningWord,
+    turnsPlayed,
+    participantCount,
+    totalRewardVnd,
+    streakBonusVnd,
+    newStreak,
+    nextSession,
+  } = winResult;
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('noitu:chan_stop')
+      .setLabel('Đổi Từ Mới (stop!)')
+      .setEmoji('🔄')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('noitu:hub_lb')
+      .setLabel('Xếp Hạng (nrank)')
+      .setEmoji('🏆')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  const streakLine =
+    streakBonusVnd > 0
+      ? ` *(Kèm thưởng chuỗi **${newStreak} trận thắng**: +${formatVnd(streakBonusVnd)})*`
+      : '';
+
+  return buildCv2Payload({
+    containers: [
+      createContainer({
+        accentColor: THEME.NEON_GOLD,
+        children: [
+          textDisplay(
+            [
+              `## 🏆 CHIẾN THẮNG VÁN NỐI TỪ!`,
+              `👑 <@${winnerId}> đã khóa sổ bằng từ **\`${winningWord}\`** sau **${turnsPlayed} lượt** (${Math.max(1, participantCount)} người tham gia) và nhận **+${formatVnd(totalRewardVnd)}**!${streakLine}`,
+              `━━━━━━━━━━━━━━━━━━━━━━`,
+              `🟢 **Lượt mới đã bắt đầu (Ván #${nextSession.roundNumber}) — Từ bắt đầu:** **\`${nextSession.currentWord}\`**`,
+              `👉 **Hãy nối tiếp bằng tiếng:** **\`${capitalizeVi(nextSession.requiredPrefix)} ...\`**`,
+            ].join('\n')
+          ),
+          row,
+        ],
+      }),
+    ],
+    allowedMentions: { users: [winnerId] },
+  });
+}
+
+export function buildNoituHubPayload(wordChainSystem, channelId = null) {
   const cfg = wordChainSystem.getConfig();
   const activeCount = wordChainSystem.rooms.size;
+  const chanSess = channelId ? wordChainSystem.getChannelSession?.(channelId) : null;
   const banner = buildAssetAttachment(ASSET_PATHS.GAME_NOITU, 'noitu_gameshow.png');
 
-  const row1 = new ActionRowBuilder().addComponents(
+  const rowChannel = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId('noitu:hub_create')
-      .setLabel('Tạo Phòng')
-      .setEmoji('➕')
+      .setCustomId('noitu:chan_start')
+      .setLabel(chanSess?.running ? 'Xem Từ Hiện Tại (start!)' : 'Bắt Đầu Chơi Chung (start!)')
+      .setEmoji('▶️')
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
+      .setCustomId('noitu:chan_stop')
+      .setLabel('Đổi Từ Mới (stop!)')
+      .setEmoji('🔄')
+      .setStyle(ButtonStyle.Primary)
+  );
+
+  const row1v1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('noitu:hub_create')
+      .setLabel('Tạo Phòng 1v1')
+      .setEmoji('⚔️')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
       .setCustomId('noitu:hub_join')
-      .setLabel('Vào Nhanh')
+      .setLabel('Vào 1v1')
       .setEmoji('🚪')
-      .setStyle(ButtonStyle.Primary),
+      .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId('noitu:hub_stats')
       .setLabel('Thống Kê')
@@ -96,21 +215,25 @@ export function buildNoituHubPayload(wordChainSystem) {
       .setStyle(ButtonStyle.Secondary)
   );
 
+  const chanStatusText = chanSess?.running
+    ? `🟢 **Ván Chung Toàn Kênh (#${chanSess.roundNumber}):** Đang dừng ở từ **\`${chanSess.currentWord}\`** ➔ Gõ từ bắt đầu bằng **\`${capitalizeVi(chanSess.requiredPrefix)} ...\`** ngay dưới chat!`
+    : `⚪ **Ván Chung Toàn Kênh:** Chưa mở — Gõ **\`start!\`** hoặc bấm nút **Bắt Đầu Chơi Chung** bên dưới để cả kênh cùng nối từ!`;
+
   const hubContainer = createContainer({
     accentColor: THEME.NEON_CYAN,
     children: [
-      mediaGallery([{ url: banner.url, description: 'Game Show Nối Từ Tiếng Việt PRO (1v1)' }]),
+      mediaGallery([{ url: banner.url, description: 'Nối Từ Tiếng Việt PRO — Nhiều Người & 1v1' }]),
       textDisplay(
-        `## 🔤 GAME SHOW NỐI TỪ TIẾNG VIỆT PRO (1v1)\n` +
-          `Đấu trường từ vựng đối kháng **2 người chơi** theo thời gian thực!\n\n` +
-          `• 📚 **Kho từ điển cục bộ:** **${wordChainSystem.dictionary.size.toLocaleString('vi-VN')} từ ghép 2 tiếng**\n` +
-          `• ⏱️ **Đồng hồ mỗi lượt:** **${cfg.timeoutSec} giây** *(Nhắc nhở khi còn 10s)*\n` +
-          `• 💰 **Thưởng thắng trận:** **+${formatVnd(cfg.baseReward)}**\n` +
-          `• 🔥 **Thưởng chuỗi thắng:** \`3 trận (+${formatVnd(cfg.streak3Bonus)})\` • \`5 trận (+${formatVnd(cfg.streak5Bonus)})\` • \`10 trận (+${formatVnd(cfg.streak10Bonus)})\`\n` +
-          `• 🏟️ **Phòng đang mở:** \`${activeCount} phòng\``
+        `## 🔤 NỐI TỪ TIẾNG VIỆT PRO (NHIỀU NGƯỜI & ĐỐI KHÁNG 1v1)\n` +
+          `${chanStatusText}\n\n` +
+          `• 📚 **Kho từ điển tiếng Việt:** **${wordChainSystem.dictionary.size.toLocaleString('vi-VN')} từ ghép 2 tiếng**\n` +
+          `• 💬 **Lệnh nhanh trên kênh:** \`start!\` (mở ván chung) • \`stop!\` (đổi từ mới) • \`nme\` (hồ sơ) • \`nrank\` (BXH)\n` +
+          `• 💰 **Thưởng:** Nối đúng thả ✅ nhận nóng VNĐ/từ + **Thưởng thắng ván +${formatVnd(cfg.baseReward)}** *(Chuỗi 3/5/10: +${formatVnd(cfg.streak3Bonus)} / +${formatVnd(cfg.streak5Bonus)} / +${formatVnd(cfg.streak10Bonus)})*\n` +
+          `• 🏟️ **Phòng đấu tay đôi 1v1 đang mở:** \`${activeCount} phòng\``
       ),
       separator(),
-      row1,
+      rowChannel,
+      row1v1,
     ],
   });
 
@@ -447,18 +570,18 @@ export function buildVictoryPayload(outcome) {
 
 export function buildRulesPayload(cfg, ephemeral = false) {
   return buildCv2NoticePayload({
-    title: '📖 LUẬT CHƠI NỐI TỪ TIẾNG VIỆT PRO (1v1)',
+    title: '📖 LUẬT CHƠI NỐI TỪ TIẾNG VIỆT (NHIỀU NGƯỜI & 1v1)',
     body:
-      '**1. Quy tắc nối từ:**\n' +
-      '• Thi đấu đối kháng **2 người chơi** theo lượt *(VD: Học sinh ➔ Sinh viên ➔ Viên chức)*.\n' +
-      '• Tiếng đầu tiên của từ sau phải trùng chính xác tiếng cuối cùng của từ trước.\n' +
-      '• Chỉ chấp nhận từ ghép **2 tiếng** có trong từ điển tiếng Việt hợp lệ, không lặp lại từ đã dùng.\n\n' +
-      '**2. Điều kiện chiến thắng:**\n' +
-      `• **Đối thủ hết giờ:** Quá **${cfg.timeoutSec} giây** (có cảnh báo khi còn 10s).\n` +
-      '• **Đối thủ đầu hàng:** Bấm `🏳️ Đầu Hàng` hoặc `/noitu surrender`.\n' +
-      '• **Khóa từ đặc biệt:** Từ hợp lệ bạn đưa ra khiến tiếng cuối **hết sạch từ nối tiếp** trong từ điển ➔ **Thắng ngay lập tức!**\n\n' +
+      '**1. Chế độ Nhiều Người Toàn Kênh (giống Neko — không giới hạn người chơi):**\n' +
+      '• Cài kênh bằng `nsetnoitu` hoặc `/admin set-game-channel noitu`.\n' +
+      '• Gõ **`start!`** (hoặc `/noitu start`) trong kênh để Bot ra từ mở đầu.\n' +
+      '• Tất cả thành viên trong kênh đều gõ từ ghép **2 tiếng** nối tiếp được ngay trên chat *(VD: bàn ghế ➔ ghế đá ➔ đá bào)*.\n' +
+      '• Không được tự nối 2 lượt liên tiếp. Nối đúng Bot thả **✅** và cộng nóng VNĐ!\n' +
+      '• Khi bí từ không ai nối tiếp được, gõ **`stop!`** (hoặc `/noitu stop`) để đổi từ mới.\n\n' +
+      '**2. Chế độ Đấu Tay Đôi 1v1 (`/noitu create` / `join`):**\n' +
+      `• Đấu tính giờ **${cfg.timeoutSec} giây/lượt** giữa 2 người chơi, hết giờ hoặc bí từ xử thắng ngay.\n\n` +
       '**3. Phần thưởng VNĐ:**\n' +
-      `• Thắng trận: **+${formatVnd(cfg.baseReward)}** • Chuỗi **3/5/10 trận**: **+${formatVnd(cfg.streak3Bonus)} / +${formatVnd(cfg.streak5Bonus)} / +${formatVnd(cfg.streak10Bonus)}**`,
+      `• Thắng ván: **+${formatVnd(cfg.baseReward)}** • Chuỗi **3/5/10 ván**: **+${formatVnd(cfg.streak3Bonus)} / +${formatVnd(cfg.streak5Bonus)} / +${formatVnd(cfg.streak10Bonus)}**`,
     accentColor: THEME.NEON_CYAN,
     ephemeral,
   });
@@ -466,9 +589,10 @@ export function buildRulesPayload(cfg, ephemeral = false) {
 
 export function buildStatsPayload(targetUser, stats, ephemeral = false) {
   return buildCv2NoticePayload({
-    title: `📊 THỐNG KÊ NỐI TỪ — ${targetUser.username}`,
+    title: `📊 HỒ SƠ NỐI TỪ — ${targetUser.username}`,
     body:
-      `• 🎮 **Tổng số trận:** \`${stats.totalMatches}\`  │  🏆 **Thắng:** \`${stats.wins}\`  │  💔 **Thua:** \`${stats.losses}\`\n` +
+      `• ✅ **Tổng số từ nối đúng:** \`${stats.totalTurnsPlayed}\` từ\n` +
+      `• 🎮 **Tổng số ván:** \`${stats.totalMatches}\`  │  🏆 **Thắng ván:** \`${stats.wins}\`  │  💔 **Thua 1v1:** \`${stats.losses}\`\n` +
       `• 📈 **Tỷ lệ thắng:** **${stats.winRate}%** (\`${renderNeonBar(stats.wins, Math.max(1, stats.totalMatches), 8)}\`)\n` +
       `• 🔥 **Chuỗi thắng hiện tại:** \`${stats.currentStreak}\` • 👑 **Chuỗi đỉnh cao:** \`${stats.bestStreak}\`\n` +
       `• 💰 **Tổng VNĐ kiếm được từ Nối Từ:** **${formatVnd(stats.totalVndEarned)}**`,
@@ -562,13 +686,26 @@ export const noituCommand = {
     .addSubcommand((s) =>
       s
         .setName('start')
-        .setDescription('Bắt đầu trận đấu Nối Từ (chỉ dành cho Chủ phòng khi đủ 2 người)')
+        .setDescription('Bắt đầu ván Nối Từ nhiều người toàn kênh (hoặc mở trận 1v1 nếu đang có phòng)')
         .addStringOption((o) =>
-          o.setName('room').setDescription('Mã phòng của bạn (tùy chọn)').setRequired(false)
+          o.setName('room').setDescription('Mã phòng 1v1 (bỏ trống để mở ván nhiều người toàn kênh)').setRequired(false)
         )
     )
     .addSubcommand((s) =>
-      s.setName('surrender').setDescription('Chấp nhận đầu hàng trong trận đấu Nối Từ đang diễn ra')
+      s
+        .setName('stop')
+        .setDescription('Kết thúc ván Nối Từ chung hiện tại & tự động đổi từ bắt đầu mới (stop!)')
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('them-tu')
+        .setDescription('Thêm / đóng góp từ ghép 2 tiếng tiếng Việt mới vào từ điển Nối Từ')
+        .addStringOption((o) =>
+          o.setName('tu').setDescription('Từ ghép 2 tiếng muốn thêm (VD: bánh tráng)').setRequired(true)
+        )
+    )
+    .addSubcommand((s) =>
+      s.setName('surrender').setDescription('Chấp nhận đầu hàng trong trận đấu Nối Từ 1v1 đang diễn ra')
     )
     .addSubcommand((s) =>
       s
@@ -599,13 +736,13 @@ export const noituCommand = {
       s.setName('rules').setDescription('Xem chi tiết luật chơi, điều kiện thắng & phần thưởng VNĐ')
     ),
 
-  async execute(interaction, { wordChainSystem }) {
+  async execute(interaction, { db, wordChainSystem }) {
     const sub = interaction.options?.getSubcommand?.(false) ?? 'lobby';
     const uid = interaction.user.id;
     const uname = interaction.user.username;
 
     if (sub === 'lobby') {
-      await safeReplyV2(interaction, buildNoituHubPayload(wordChainSystem));
+      await safeReplyV2(interaction, buildNoituHubPayload(wordChainSystem, interaction.channelId));
       return;
     }
 
@@ -690,6 +827,35 @@ export const noituCommand = {
 
     if (sub === 'start') {
       const code = interaction.options?.getString?.('room') ?? null;
+      const active1v1 = wordChainSystem.getPlayerActiveRoom(uid);
+
+      // Nếu không chỉ định mã phòng và người chơi cũng không làm chủ phòng 1v1 -> Mở ngay ván Nối Từ Nhiều Người Toàn Kênh (giống start!)
+      if (!code && !active1v1) {
+        const res = wordChainSystem.startChannelSession({
+          guildId: interaction.guildId ?? 'dm',
+          channelId: interaction.channelId,
+          actorId: uid,
+          actorName: uname,
+        });
+        if (!res.ok && res.code === 'ALREADY_RUNNING') {
+          await safeReplyV2(
+            interaction,
+            buildCv2NoticePayload({
+              title: `🟢 Ván Nối Từ Chung #${res.session.roundNumber} Đang Diễn Ra!`,
+              body:
+                `🎯 **Từ hiện tại:** **\`${res.session.currentWord}\`**\n` +
+                `👉 **Hãy gõ từ ghép 2 tiếng bắt đầu bằng:** **\`${capitalizeVi(res.session.requiredPrefix)} ...\`**\n` +
+                `*(Có thể dùng \`/noitu stop\` hoặc gõ \`stop!\` nếu muốn đổi sang từ mới)*`,
+              accentColor: THEME.NEON_CYAN,
+              ephemeral: true,
+            })
+          );
+          return;
+        }
+        await safeReplyV2(interaction, buildChannelStartPayload(res.session));
+        return;
+      }
+
       const room = wordChainSystem.startMatch({
         roomId: code,
         channelId: interaction.channelId,
@@ -717,6 +883,58 @@ export const noituCommand = {
             : await interaction.fetchReply?.().catch(() => null);
         if (msg) wordChainSystem.attachBoardMessage(room.roomId, msg);
       }
+      return;
+    }
+
+    if (sub === 'stop') {
+      const canForceStop =
+        Boolean(db && hasBotRole(db, uid, BOT_ROLES.MOD)) ||
+        Boolean(
+          interaction.memberPermissions?.has?.(PermissionsBitField.Flags.ManageChannels) ||
+            interaction.memberPermissions?.has?.(PermissionsBitField.Flags.ManageGuild)
+        );
+      const res = wordChainSystem.stopChannelSessionAndRestart({
+        guildId: interaction.guildId ?? 'dm',
+        channelId: interaction.channelId,
+        actorId: uid,
+        actorName: uname,
+        canForceStop,
+      });
+      if (!res.ok) {
+        const body =
+          res.code === 'NOT_RUNNING'
+            ? 'Trò chơi Nối Từ chung chưa bắt đầu! Hãy gõ **`start!`** hoặc `/noitu start` để mở ván.'
+            : `⏳ Ván đang diễn ra sôi nổi! Hãy đợi thêm **${res.waitSec} giây** không ai nối tiếp được để đổi từ mới, hoặc nhờ Quản trị viên gõ \`stop!\`.`;
+        await safeReplyV2(
+          interaction,
+          buildCv2NoticePayload({
+            title: '⚠️ Chưa Thể Kết Thúc Lượt Này',
+            body,
+            accentColor: THEME.AMBER_PULSE,
+            ephemeral: true,
+          })
+        );
+        return;
+      }
+      await safeReplyV2(
+        interaction,
+        buildChannelStartPayload(res.session, { isRestart: true, prevSession: res.previousSession })
+      );
+      return;
+    }
+
+    if (sub === 'them-tu') {
+      const rawWord = interaction.options?.getString?.('tu', true) ?? '';
+      const added = wordChainSystem.addCustomWord(rawWord, uid);
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '✅ Đã Bổ Sung Từ Mới Vào Từ Điển!',
+          body: `Từ ghép **\`${added}\`** đã được lưu vào kho từ điển Nối Từ Tiếng Việt của máy chủ!`,
+          accentColor: THEME.CYBER_EMERALD,
+          ephemeral: true,
+        })
+      );
       return;
     }
 
@@ -807,6 +1025,7 @@ export function registerNoituUiHooks(wordChainSystem) {
 
 export async function handleNoituInteraction(interaction, ctxOrDeps) {
   const wordChainSystem = ctxOrDeps?.wordChainSystem || ctxOrDeps?.systems?.wordChainSystem;
+  const db = ctxOrDeps?.db || ctxOrDeps?.systems?.db || wordChainSystem?.db;
   const id = interaction.customId || '';
   if (!id.startsWith('noitu:') || !wordChainSystem) return false;
 
@@ -815,6 +1034,68 @@ export async function handleNoituInteraction(interaction, ctxOrDeps) {
   const roomId = parts[2] || null;
   const uid = interaction.user.id;
   const uname = interaction.user.username;
+
+  if (action === 'chan_start') {
+    const res = wordChainSystem.startChannelSession({
+      guildId: interaction.guildId ?? 'dm',
+      channelId: interaction.channelId,
+      actorId: uid,
+      actorName: uname,
+    });
+    if (!res.ok && res.code === 'ALREADY_RUNNING') {
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: `🟢 Ván Nối Từ Chung #${res.session.roundNumber} Đang Chạy!`,
+          body:
+            `🎯 **Từ hiện tại:** **\`${res.session.currentWord}\`**\n` +
+            `👉 **Hãy gõ từ ghép 2 tiếng bắt đầu bằng:** **\`${capitalizeVi(res.session.requiredPrefix)} ...\`**`,
+          accentColor: THEME.NEON_CYAN,
+          ephemeral: true,
+        })
+      );
+      return true;
+    }
+    await safeReplyV2(interaction, buildChannelStartPayload(res.session));
+    return true;
+  }
+
+  if (action === 'chan_stop') {
+    const canForceStop =
+      Boolean(db && hasBotRole(db, uid, BOT_ROLES.MOD)) ||
+      Boolean(
+        interaction.memberPermissions?.has?.(PermissionsBitField.Flags.ManageChannels) ||
+          interaction.memberPermissions?.has?.(PermissionsBitField.Flags.ManageGuild)
+      );
+    const res = wordChainSystem.stopChannelSessionAndRestart({
+      guildId: interaction.guildId ?? 'dm',
+      channelId: interaction.channelId,
+      actorId: uid,
+      actorName: uname,
+      canForceStop,
+    });
+    if (!res.ok) {
+      const body =
+        res.code === 'NOT_RUNNING'
+          ? 'Trò chơi Nối Từ chung chưa bắt đầu! Hãy nhấn **Bắt Đầu Chơi Chung** hoặc gõ `start!`.'
+          : `⏳ Ván đang diễn ra sôi nổi! Đợi thêm **${res.waitSec} giây** không ai nối được để đổi từ mới, hoặc nhờ Quản trị viên bấm nhé.`;
+      await safeReplyV2(
+        interaction,
+        buildCv2NoticePayload({
+          title: '⚠️ Chưa Thể Đổi Từ Lúc Này',
+          body,
+          accentColor: THEME.AMBER_PULSE,
+          ephemeral: true,
+        })
+      );
+      return true;
+    }
+    await safeReplyV2(
+      interaction,
+      buildChannelStartPayload(res.session, { isRestart: true, prevSession: res.previousSession })
+    );
+    return true;
+  }
 
   if (action === 'hub_rules') {
     await safeReplyV2(interaction, buildRulesPayload(wordChainSystem.getConfig(), true));

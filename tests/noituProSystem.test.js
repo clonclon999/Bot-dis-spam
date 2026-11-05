@@ -514,4 +514,161 @@ describe('TRÒ CHƠI NỐI TỪ TIẾNG VIỆT PRO — Toàn Bộ 11 Kịch Bả
       await fsp.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('12. Chế độ Nhiều Người Toàn Kênh kiểu Neko (nsetnoitu | start! | stop!): Không giới hạn số người, thả ✅/❌, thắng tự mở ván mới & bền vững SQLite', async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'noitu-neko-multi-'));
+    try {
+      const sys = await createBotSystems(tmpDir);
+      try {
+        assert.ok(
+          sys.wordChainSystem.dictionary.size >= 50_000,
+          'Kho từ điển tiếng Việt mở rộng phải đạt trên 50.000 từ ghép 2 tiếng'
+        );
+
+        const channelPayloads = [];
+        let msgSeq = 0;
+        const mockChannel = {
+          id: 'chan-neko-nt',
+          parentId: null,
+          send: async (payload) => {
+            assert.equal(validateCv2Payload(payload).valid, true);
+            channelPayloads.push(payload);
+            return {
+              id: `nt-msg-${++msgSeq}`,
+              edit: async () => {},
+              delete: async () => {},
+            };
+          },
+        };
+
+        const sendChat = async (userId, username, content) => {
+          const reactions = [];
+          await handleMessageCreate(
+            {
+              id: `chat-${++msgSeq}`,
+              guild: { id: 'g-neko' },
+              channel: mockChannel,
+              author: { id: userId, username, bot: false },
+              content,
+              react: async (emoji) => {
+                reactions.push(emoji);
+              },
+            },
+            sys
+          );
+          return reactions;
+        };
+
+        // 1. OWNER gõ `nsetnoitu` ngay trong kênh -> Tự động cài kênh Nối Từ
+        await sendChat(HARDCODED_OWNER_ID, 'OwnerBoss', 'nsetnoitu');
+        assert.equal(sys.db.isAllowedGameChannel('g-neko', 'noitu', 'chan-neko-nt', null), true);
+
+        // 2. Đặt từ bắt đầu cụ thể bằng `startChannelSession` (hoặc `start!`) để 4 người chơi cùng nối liên tiếp!
+        await sendChat('u-p1', 'Player1', 'start!');
+        let sess = sys.wordChainSystem.getChannelSession('chan-neko-nt');
+        assert.equal(sess.running, true);
+        assert.equal(sess.roundNumber, 1);
+
+        // Cố định từ mở đầu 'bàn ghế' để kiểm tra dây chuyền 4 người chơi khác nhau:
+        // bàn ghế -> (P1) ghế đá -> (P2) đá bào -> (P3) bào ngư -> (P4) ngư dân
+        sys.wordChainSystem.startChannelSession({
+          guildId: 'g-neko',
+          channelId: 'chan-neko-nt',
+          actorId: 'u-p1',
+          actorName: 'Player1',
+          forceRestart: true,
+          customStartWord: 'bàn ghế',
+        });
+
+        const wBefore1 = sys.economySystem.ensureUser('u-p1', 'Player1').wallet;
+        const r1 = await sendChat('u-p1', 'Player1', 'ghế đá');
+        assert.deepEqual(r1, ['✅']);
+        assert.ok(sys.economySystem.getBalance('u-p1').wallet > wBefore1, 'Nối đúng được cộng thưởng nóng VNĐ');
+
+        // P1 cố tình nối 2 lượt liên tiếp -> bị chặn thả ❌
+        const rSame = await sendChat('u-p1', 'Player1', 'đá bào');
+        assert.deepEqual(rSame, ['❌']);
+
+        // Câu tán gẫu >= 3 chữ không bị thả ❌ nhầm
+        const rChat = await sendChat('u-p2', 'Player2', 'từ này hay quá anh em ơi');
+        assert.deepEqual(rChat, []);
+
+        // P2 nối sai chữ cái đầu -> thả ❌
+        const rWrongPrefix = await sendChat('u-p2', 'Player2', 'nhà cửa');
+        assert.deepEqual(rWrongPrefix, ['❌']);
+
+        // P2, P3, P4 nối tiếp liên hoàn mượt mà trên cùng 1 kênh!
+        assert.deepEqual(await sendChat('u-p2', 'Player2', 'đá bào'), ['✅']);
+        assert.deepEqual(await sendChat('u-p3', 'Player3', 'bào ngư'), ['✅']);
+        assert.deepEqual(await sendChat('u-p4', 'Player4', 'ngư dân'), ['✅']);
+
+        sess = sys.wordChainSystem.getChannelSession('chan-neko-nt');
+        assert.equal(sess.participants.size, 4, 'Cả 4 người chơi cùng tham gia chung 1 ván Nối Từ');
+        assert.equal(sess.turnCount, 4);
+
+        // 3. Đưa về 'mây trắng' rồi P1 tung 'trắng phau' hết từ nối tiếp -> P1 thắng ván & Bot tự động mở ngay ván mới!
+        sys.wordChainSystem.startChannelSession({
+          guildId: 'g-neko',
+          channelId: 'chan-neko-nt',
+          actorId: 'u-p2',
+          actorName: 'Player2',
+          forceRestart: true,
+          customStartWord: 'mây trắng',
+        });
+        const rWin = await sendChat('u-p1', 'Player1', 'trắng phau');
+        assert.deepEqual(rWin, ['✅', '🏆']);
+        assert.match(extractCv2Text(channelPayloads.at(-1)), /Lượt mới đã bắt đầu/);
+        assert.equal(sys.wordChainSystem.getPlayerStats('u-p1').wins, 1);
+
+        // 4. Lệnh `stop!` đổi từ mới & lệnh `/noitu them-tu` thêm từ mới
+        await sendChat(HARDCODED_OWNER_ID, 'OwnerBoss', 'stop!');
+        const roundAfterStop = sys.wordChainSystem.getChannelSession('chan-neko-nt');
+        assert.equal(roundAfterStop.running, true);
+        const savedWordBeforeRestart = roundAfterStop.currentWord;
+
+        let addWordReply = null;
+        await COMMAND_MAP.get('noitu').execute(
+          {
+            guildId: 'g-neko',
+            channelId: 'chan-neko-nt',
+            user: { id: 'u-p1', username: 'Player1' },
+            options: {
+              getSubcommand: () => 'them-tu',
+              getString: (k) => (k === 'tu' ? 'siêu mượt' : null),
+            },
+            reply: async (p) => {
+              addWordReply = p;
+            },
+          },
+          sys
+        );
+        assert.ok(addWordReply);
+        assert.equal(sys.wordChainSystem.dictionary.getEntry('siêu mượt')?.valid, true);
+
+        sys.multiplayerRoundSystem.shutdown();
+        sys.wordChainSystem.shutdownCleanup();
+        await sys.db.close();
+
+        // 5. Khởi động lại Bot -> Phiên Nối Từ Toàn Kênh được khôi phục nguyên trạng từ SQLite!
+        const sysReloaded = await createBotSystems(tmpDir);
+        try {
+          const restored = sysReloaded.wordChainSystem.getChannelSession('chan-neko-nt');
+          assert.equal(restored?.running, true);
+          assert.equal(restored?.currentWord, savedWordBeforeRestart);
+          assert.equal(sysReloaded.wordChainSystem.dictionary.getEntry('siêu mượt')?.valid, true);
+        } finally {
+          sysReloaded.multiplayerRoundSystem.shutdown();
+          sysReloaded.wordChainSystem.shutdownCleanup();
+          await sysReloaded.db.close();
+        }
+      } catch (err) {
+        sys.multiplayerRoundSystem.shutdown();
+        sys.wordChainSystem.shutdownCleanup();
+        await sys.db.close().catch(() => {});
+        throw err;
+      }
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

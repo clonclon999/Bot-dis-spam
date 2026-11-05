@@ -127,6 +127,24 @@ export class GameDatabase {
            )`
         );
       }
+      this.db.run(
+        `CREATE TABLE IF NOT EXISTS noitu_channel_sessions (
+           channel_id TEXT PRIMARY KEY,
+           guild_id TEXT NOT NULL,
+           running INTEGER NOT NULL DEFAULT 0 CHECK(running IN (0, 1)),
+           round_number INTEGER NOT NULL DEFAULT 0,
+           current_word TEXT DEFAULT NULL,
+           required_prefix TEXT DEFAULT NULL,
+           last_player_id TEXT DEFAULT NULL,
+           last_player_name TEXT NOT NULL DEFAULT '',
+           words_json TEXT NOT NULL DEFAULT '[]',
+           participants_json TEXT NOT NULL DEFAULT '[]',
+           turn_count INTEGER NOT NULL DEFAULT 0,
+           started_by TEXT DEFAULT NULL,
+           started_at INTEGER NOT NULL DEFAULT 0,
+           updated_at INTEGER NOT NULL DEFAULT 0
+         )`
+      );
     } catch {
       // Bỏ qua nếu cột đã tồn tại
     }

@@ -1,15 +1,24 @@
+import { PermissionsBitField } from 'discord.js';
 import {
+  buildChannelStartPayload,
+  buildChannelWinAndNextPayload,
   buildInvalidWordPayload,
+  buildLeaderboardPayload,
+  buildStatsPayload,
   buildValidTurnPayload,
   buildVictoryPayload,
+  capitalizeVi,
   cleanupRoomFeedbackMessage,
   editNoituBoardMessage,
 } from '../commands/games/noitu.js';
-import { GAME_IDS } from '../config/constants.js';
+import { BOT_ROLES, GAME_IDS } from '../config/constants.js';
 import { evaluateExemption } from '../services/whitelistService.js';
+import { buildCv2NoticePayload } from '../ui/componentsV2.js';
+import { THEME } from '../ui/theme.js';
 import { ConcurrencyGuard } from '../utils/locks.js';
 import { logger } from '../utils/logger.js';
 import { DEFAULT_RESULT_TTL_MS, globalPanelCleaner } from '../utils/panelCleaner.js';
+import { hasBotRole } from '../utils/permissions.js';
 
 /** Bộ đệm thời gian nhận EXP trò chuyện để tránh ghi SQLite liên tục khi chat nhanh */
 const chatExpCooldowns = new Map();
@@ -62,8 +71,49 @@ export async function handleMessageCreate(message, context) {
 
     if (message.author?.bot) return;
 
-    // Bước 2: Xử lý Trò Chơi Nối Từ Tiếng Việt PRO (CHỈ hoạt động tại đúng kênh Nối Từ đã cài đặt)
+    // Bước 2: Xử lý Trò Chơi Nối Từ Tiếng Việt (Hỗ trợ cả Nhiều Người Toàn Kênh kiểu Neko lẫn 1v1)
     if (db && wordChainSystem && !db.getSetting('maintenanceMode') && wordChainSystem.isEnabled()) {
+      const rawTrim = String(message.content ?? '').trim();
+      const lowerCmd = rawTrim.toLowerCase();
+
+      // Lệnh nhanh `nsetnoitu` / `!setnoitu` giống Neko để cài kênh Nối Từ trực tiếp tại kênh hiện tại
+      if (lowerCmd === 'nsetnoitu' || lowerCmd === '!setnoitu') {
+        const canSet =
+          hasBotRole(db, message.author.id, BOT_ROLES.ADMIN) ||
+          Boolean(
+            message.member?.permissions?.has?.(PermissionsBitField.Flags.ManageGuild) ||
+              message.member?.permissions?.has?.(PermissionsBitField.Flags.ManageChannels)
+          );
+        if (!canSet) {
+          const denied = await message.channel
+            ?.send?.(
+              buildCv2NoticePayload({
+                title: '⛔ Không Đủ Quyền Cài Kênh',
+                body: 'Bạn cần quyền Quản lý Máy chủ / Kênh hoặc quyền ADMIN để dùng `nsetnoitu`!',
+                accentColor: THEME.CRIMSON_NEON,
+              })
+            )
+            .catch(() => null);
+          if (denied) globalPanelCleaner.scheduleAutoDelete(denied, 6_000);
+          return;
+        }
+
+        db.setGameChannel(message.guild.id, GAME_IDS.NOITU, message.channel.id);
+        const okMsg = await message.channel
+          ?.send?.(
+            buildCv2NoticePayload({
+              title: '✅ Đã Cài Đặt Kênh Nối Từ Nhiều Người!',
+              body:
+                `Đã chọn <#${message.channel.id}> làm kênh **Nối Từ Tiếng Việt** của máy chủ.\n` +
+                `👉 Gõ **\`start!\`** ngay trong kênh này để bắt đầu chơi nhiều người! *(Dùng \`stop!\` để đổi từ mới)*`,
+              accentColor: THEME.CYBER_EMERALD,
+            })
+          )
+          .catch(() => null);
+        if (okMsg) globalPanelCleaner.scheduleAutoDelete(okMsg, DEFAULT_RESULT_TTL_MS);
+        return;
+      }
+
       const parentId = message.channel?.parentId ?? null;
       const isNoituChannel = db.isAllowedGameChannel(
         message.guild.id,
@@ -73,32 +123,191 @@ export async function handleMessageCreate(message, context) {
       );
 
       if (isNoituChannel) {
+        const userRow = db.get('SELECT is_banned FROM users WHERE user_id = ?', [
+          message.author.id,
+        ]);
+        if (userRow?.is_banned) return;
+
+        // 2a. Các lệnh nhanh phong cách Neko ngay trong kênh #nối-từ (`start!`, `stop!`, `nrank`, `nme`)
+        if (lowerCmd === 'start!' || lowerCmd === '!start') {
+          await noituRoomGuard.runExclusive(`chan:${message.channel.id}`, async () => {
+            const res = wordChainSystem.startChannelSession({
+              guildId: message.guild.id,
+              channelId: message.channel.id,
+              actorId: message.author.id,
+              actorName: message.author.username,
+            });
+            if (!res.ok && res.code === 'ALREADY_RUNNING') {
+              const remind = await message.channel
+                ?.send?.(
+                  buildCv2NoticePayload({
+                    title: `🟢 Trò Chơi Vẫn Đang Tiếp Tục (Ván #${res.session.roundNumber})`,
+                    body:
+                      `🎯 **Từ hiện tại:** **\`${res.session.currentWord}\`** ➔ Hãy nối tiếp bằng **\`${capitalizeVi(res.session.requiredPrefix)} ...\`**!\n` +
+                      `*(Bạn có thể gõ \`stop!\` nếu muốn kết thúc và đổi sang từ mới)*`,
+                    accentColor: THEME.NEON_CYAN,
+                  })
+                )
+                .catch(() => null);
+              if (remind) globalPanelCleaner.scheduleAutoDelete(remind, 8_000);
+              return;
+            }
+            const sent = await message.channel
+              ?.send?.(buildChannelStartPayload(res.session))
+              .catch(() => null);
+            if (sent) {
+              await globalPanelCleaner.registerChannelBoard(
+                message.channel.id,
+                'noitu_chan_round',
+                sent
+              );
+            }
+          });
+          return;
+        }
+
+        if (lowerCmd === 'stop!' || lowerCmd === '!stop') {
+          const canForceStop =
+            hasBotRole(db, message.author.id, BOT_ROLES.MOD) ||
+            Boolean(
+              message.member?.permissions?.has?.(PermissionsBitField.Flags.ManageChannels) ||
+                message.member?.permissions?.has?.(PermissionsBitField.Flags.ManageGuild)
+            );
+          await noituRoomGuard.runExclusive(`chan:${message.channel.id}`, async () => {
+            const res = wordChainSystem.stopChannelSessionAndRestart({
+              guildId: message.guild.id,
+              channelId: message.channel.id,
+              actorId: message.author.id,
+              actorName: message.author.username,
+              canForceStop,
+            });
+            if (!res.ok) {
+              const body =
+                res.code === 'NOT_RUNNING'
+                  ? 'Trò chơi chưa bắt đầu! Hãy gõ **`start!`** để mở ván mới.'
+                  : `⏳ Ván đang diễn ra! Đợi thêm **${res.waitSec} giây** không ai nối được để đổi từ mới, hoặc nhờ Quản trị viên gõ \`stop!\`.`;
+              const warn = await message.channel
+                ?.send?.(
+                  buildCv2NoticePayload({
+                    title: '⚠️ Chưa Thể Đổi Từ Lúc Này',
+                    body,
+                    accentColor: THEME.AMBER_PULSE,
+                  })
+                )
+                .catch(() => null);
+              if (warn) globalPanelCleaner.scheduleAutoDelete(warn, 5_000);
+              return;
+            }
+            const sent = await message.channel
+              ?.send?.(
+                buildChannelStartPayload(res.session, {
+                  isRestart: true,
+                  prevSession: res.previousSession,
+                })
+              )
+              .catch(() => null);
+            if (sent) {
+              await globalPanelCleaner.registerChannelBoard(
+                message.channel.id,
+                'noitu_chan_round',
+                sent
+              );
+            }
+          });
+          return;
+        }
+
+        if (lowerCmd === 'nrank' || lowerCmd === '!rank') {
+          const boards = wordChainSystem.getLeaderboards(10);
+          const sent = await message.channel
+            ?.send?.(buildLeaderboardPayload(boards, 'all', false))
+            .catch(() => null);
+          if (sent) globalPanelCleaner.scheduleAutoDelete(sent, DEFAULT_RESULT_TTL_MS);
+          return;
+        }
+
+        if (lowerCmd === 'nme' || lowerCmd === '!me') {
+          const stats = wordChainSystem.getPlayerStats(
+            message.author.id,
+            message.author.username
+          );
+          const sent = await message.channel
+            ?.send?.(buildStatsPayload(message.author, stats, false))
+            .catch(() => null);
+          if (sent) globalPanelCleaner.scheduleAutoDelete(sent, DEFAULT_RESULT_TTL_MS);
+          return;
+        }
+
+        // 2b. Nếu người chơi đang thi đấu trong phòng 1v1 riêng thì ưu tiên xử lý phòng 1v1 đó
         const activeRoom = wordChainSystem.getPlayerActiveRoom(message.author.id);
         if (
           activeRoom &&
           activeRoom.status === 'playing' &&
           activeRoom.channelId === String(message.channel.id)
         ) {
-          const userRow = db.get('SELECT is_banned FROM users WHERE user_id = ?', [
-            message.author.id,
-          ]);
-          if (!userRow?.is_banned) {
-            await noituRoomGuard.runExclusive(activeRoom.roomId, async () => {
-              activeRoom.channelRef = message.channel;
-              const turnResult = wordChainSystem.submitTurnMessage({
-                guildId: message.guild.id,
-                channelId: message.channel.id,
-                userId: message.author.id,
-                username: message.author.username,
-                content: message.content,
-              });
-
-              if (turnResult) {
-                await renderNoituProTurn(message, turnResult, wordChainSystem);
-              }
+          await noituRoomGuard.runExclusive(activeRoom.roomId, async () => {
+            activeRoom.channelRef = message.channel;
+            const turnResult = wordChainSystem.submitTurnMessage({
+              guildId: message.guild.id,
+              channelId: message.channel.id,
+              userId: message.author.id,
+              username: message.author.username,
+              content: message.content,
             });
-            return;
-          }
+
+            if (turnResult) {
+              await renderNoituProTurn(message, turnResult, wordChainSystem);
+            }
+          });
+          return;
+        }
+
+        // 2c. Xử lý Nối Từ Nhiều Người Toàn Kênh (không giới hạn số người chơi!)
+        const chanSession = wordChainSystem.getChannelSession(message.channel.id);
+        if (chanSession?.running) {
+          let handledInChannel = false;
+          await noituRoomGuard.runExclusive(`chan:${message.channel.id}`, async () => {
+            const wordRes = wordChainSystem.submitChannelWord({
+              guildId: message.guild.id,
+              channelId: message.channel.id,
+              userId: message.author.id,
+              username: message.author.username,
+              content: message.content,
+            });
+            if (!wordRes) return;
+            handledInChannel = true;
+
+            if (!wordRes.ok) {
+              await message.react?.('❌')?.catch(() => {});
+              const hint = await message.channel
+                ?.send?.(
+                  buildCv2NoticePayload({
+                    title: '❌ Chưa Hợp Lệ',
+                    body: wordRes.message,
+                    accentColor: THEME.CRIMSON_NEON,
+                  })
+                )
+                .catch(() => null);
+              if (hint) globalPanelCleaner.scheduleAutoDelete(hint, 4_000);
+              return;
+            }
+
+            await message.react?.('✅')?.catch(() => {});
+            if (wordRes.finished) {
+              await message.react?.('🏆')?.catch(() => {});
+              const winSent = await message.channel
+                ?.send?.(buildChannelWinAndNextPayload(wordRes))
+                .catch(() => null);
+              if (winSent) {
+                await globalPanelCleaner.registerChannelBoard(
+                  message.channel.id,
+                  'noitu_chan_round',
+                  winSent
+                );
+              }
+            }
+          });
+          if (handledInChannel) return;
         }
       }
     }

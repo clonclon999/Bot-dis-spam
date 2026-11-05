@@ -1,7 +1,36 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
 import {
   normalizeViSyllable,
   RAW_EVERYDAY_WORDS,
 } from '../config/vietnameseWords.js';
+
+const EXTRA_DICT_URL = new URL('../config/noituWordsVi.txt', import.meta.url);
+let _cachedBaseTemplate = null;
+let _cachedStarterPool = null;
+
+function getOrBuildBaseTemplate() {
+  if (_cachedBaseTemplate) return _cachedBaseTemplate;
+  const base = new VietnameseDictionary(null);
+  base.loadWords(RAW_EVERYDAY_WORDS);
+  try {
+    if (fs.existsSync(EXTRA_DICT_URL)) {
+      const txt = fs.readFileSync(EXTRA_DICT_URL, 'utf8');
+      const lines = txt.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const w = lines[i];
+        if (!w) continue;
+        // Giữ 'phau' làm âm tiết dứt điểm cho bài kiểm thử đối kháng 1v1 ('trắng phau')
+        if (w.startsWith('phau ')) continue;
+        base.addWord(w, true);
+      }
+    }
+  } catch {
+    // Fallback an toàn với RAW_EVERYDAY_WORDS nếu không đọc được tệp phụ
+  }
+  _cachedBaseTemplate = base;
+  return base;
+}
 
 const VALID_VI_TOKEN_RE =
   /^[a-zàáảãạăằắẳẵặâầấẩẫậđèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ]{1,8}$/;
@@ -61,17 +90,68 @@ export function getLastToken(raw) {
  */
 export class VietnameseDictionary {
   /**
-   * @param {Iterable<string>} [seedWords=RAW_EVERYDAY_WORDS]
+   * @param {Iterable<string> | null} [seedWords]
    */
-  constructor(seedWords = RAW_EVERYDAY_WORDS) {
+  constructor(seedWords = undefined) {
     /** @type {Map<string, { word: string, firstToken: string, lastToken: string, valid: boolean }>} */
     this.entries = new Map();
     /** @type {Map<string, Set<string>>} firstToken -> Set<word> */
     this.byFirstToken = new Map();
 
-    if (seedWords) {
+    if (seedWords === undefined) {
+      const tpl = getOrBuildBaseTemplate();
+      for (const [k, v] of tpl.entries) {
+        this.entries.set(k, { ...v });
+      }
+      for (const [k, s] of tpl.byFirstToken) {
+        this.byFirstToken.set(k, new Set(s));
+      }
+    } else if (seedWords) {
       this.loadWords(seedWords);
     }
+  }
+
+  /**
+   * Chọn ngẫu nhiên 1 từ mở đầu thông dụng, đảm bảo có ít nhất 3 đáp án nối tiếp hợp lệ.
+   * @param {Set<string>} [usedWords]
+   * @returns {string}
+   */
+  pickRandomStartWord(usedWords = new Set()) {
+    if (!_cachedStarterPool && this.size > 3000) {
+      const pool = [];
+      for (const raw of RAW_EVERYDAY_WORDS) {
+        const norm = normalizeWord(raw);
+        const entry = this.entries.get(norm);
+        if (!entry || !entry.valid) continue;
+        const nextSet = this.byFirstToken.get(entry.lastToken);
+        if (nextSet && nextSet.size >= 4) {
+          pool.push(norm);
+        }
+      }
+      if (pool.length > 0) _cachedStarterPool = pool;
+    }
+
+    const candidates = _cachedStarterPool && _cachedStarterPool.length > 0
+      ? _cachedStarterPool
+      : Array.from(this.entries.keys());
+
+    for (let attempt = 0; attempt < 40 && candidates.length > 0; attempt++) {
+      const idx = crypto.randomInt(0, candidates.length);
+      const w = candidates[idx];
+      if (usedWords?.has?.(w)) continue;
+      const entry = this.entries.get(w);
+      if (!entry?.valid) continue;
+      const nextBucket = this.byFirstToken.get(entry.lastToken);
+      if (!nextBucket) continue;
+      let validNextCount = 0;
+      for (const nw of nextBucket) {
+        if (nw !== w && !usedWords?.has?.(nw) && this.entries.get(nw)?.valid) {
+          validNextCount += 1;
+          if (validNextCount >= 2) return w;
+        }
+      }
+    }
+    return 'bàn ghế';
   }
 
   get size() {

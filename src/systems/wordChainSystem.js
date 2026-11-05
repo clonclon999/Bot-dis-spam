@@ -4,11 +4,15 @@ import { formatVnd } from '../utils/format.js';
 import {
   getFirstToken,
   getLastToken,
+  hasPossibleNextWord,
   normalizeWord,
   VietnameseDictionary,
 } from './noituDictionary.js';
 
 const LOBBY_IDLE_EXPIRE_MS = 10 * 60 * 1000; // Tự động hủy phòng chờ bỏ hoang sau 10 phút
+const CHANNEL_IDLE_PUBLIC_STOP_MS = 45 * 1000; // Sau 45s không ai nối tiếp được thì mọi thành viên đều có thể gõ stop! đổi từ mới
+const VALID_VI_SYLLABLE_RE =
+  /^[a-zàáảãạăằắẳẵặâầấẩẫậđèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ]{1,8}$/;
 
 /**
  * Hệ Thống Trò Chơi Nối Từ Tiếng Việt PRO (`WordChainSystem`) — Đối kháng 2 người chơi:
@@ -39,6 +43,8 @@ export class WordChainSystem {
 
     /** @type {Map<string, object>} Các phòng đang hoạt động (`waiting` | `playing`) trong RAM */
     this.rooms = new Map();
+    /** @type {Map<string, object>} Phiên Nối Từ Nhiều Người Toàn Kênh theo `channelId` (kiểu Neko: `start!` / `stop!`) */
+    this.channelSessions = new Map();
     /** @type {Map<string, string>} `userId` -> `roomId` đang tham gia */
     this.playerRoomMap = new Map();
     /** @type {Map<string, number>} `userId` -> dấu thời gian kết thúc/tạo phòng gần nhất (cooldown) */
@@ -52,6 +58,7 @@ export class WordChainSystem {
 
     this._loadCustomWordsFromDb();
     this._recoverInterruptedRoomsOnStartup();
+    this._loadChannelSessionsFromDb();
   }
 
   setUiHooks(hooks = {}) {
@@ -248,6 +255,11 @@ export class WordChainSystem {
       if (room.status === 'waiting' || room.status === 'playing') {
         if (room.hostId) count += 1;
         if (room.guestId) count += 1;
+      }
+    }
+    for (const sess of this.channelSessions.values()) {
+      if (sess.running) {
+        count += Math.max(1, sess.participants?.size ?? 0);
       }
     }
     return count;
@@ -1062,13 +1074,454 @@ export class WordChainSystem {
     const topActive = this.db.all(
       `SELECT user_id, username, total_matches, wins, total_turns_played, total_vnd_earned
        FROM noitu_stats
-       WHERE total_matches > 0
-       ORDER BY total_matches DESC, wins DESC
+       WHERE total_matches > 0 OR total_turns_played > 0
+       ORDER BY total_matches DESC, total_turns_played DESC, wins DESC
        LIMIT ?`,
       [safeLimit]
     );
 
     return { topWins, topStreaks, topActive };
+  }
+
+  // ==========================================================================
+  // CHẾ ĐỘ NỐI TỪ NHIỀU NGƯỜI TOÀN KÊNH (PHONG CÁCH NEKO: `start!` / `stop!`)
+  // ==========================================================================
+
+  _loadChannelSessionsFromDb() {
+    try {
+      const rows = this.db.all('SELECT * FROM noitu_channel_sessions');
+      for (const r of rows) {
+        let words = [];
+        let participants = [];
+        try {
+          words = JSON.parse(r.words_json || '[]');
+        } catch {
+          words = [];
+        }
+        try {
+          participants = JSON.parse(r.participants_json || '[]');
+        } catch {
+          participants = [];
+        }
+        this.channelSessions.set(String(r.channel_id), {
+          channelId: String(r.channel_id),
+          guildId: String(r.guild_id),
+          running: Boolean(r.running),
+          roundNumber: Number(r.round_number) || 0,
+          currentWord: r.current_word || null,
+          requiredPrefix: r.required_prefix || null,
+          lastPlayerId: r.last_player_id || null,
+          lastPlayerName: r.last_player_name || '',
+          words,
+          usedWords: new Set(words),
+          participants: new Set(participants.map(String)),
+          turnCount: Number(r.turn_count) || 0,
+          startedBy: r.started_by || null,
+          startedAt: Number(r.started_at) || 0,
+          updatedAt: Number(r.updated_at) || 0,
+        });
+      }
+    } catch {
+      // Bỏ qua nếu bảng chưa sẵn sàng
+    }
+  }
+
+  _persistChannelSession(sess) {
+    if (!sess?.channelId) return;
+    this.db.run(
+      `INSERT OR REPLACE INTO noitu_channel_sessions (
+         channel_id, guild_id, running, round_number, current_word, required_prefix,
+         last_player_id, last_player_name, words_json, participants_json,
+         turn_count, started_by, started_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        String(sess.channelId),
+        String(sess.guildId),
+        sess.running ? 1 : 0,
+        Number(sess.roundNumber) || 0,
+        sess.currentWord || null,
+        sess.requiredPrefix || null,
+        sess.lastPlayerId || null,
+        sess.lastPlayerName || '',
+        JSON.stringify(sess.words || []),
+        JSON.stringify(Array.from(sess.participants || [])),
+        Number(sess.turnCount) || 0,
+        sess.startedBy || null,
+        Number(sess.startedAt) || 0,
+        Number(sess.updatedAt) || 0,
+      ]
+    );
+  }
+
+  getChannelSession(channelId) {
+    if (!channelId) return null;
+    return this.channelSessions.get(String(channelId)) ?? null;
+  }
+
+  /**
+   * Bắt đầu ván Nối Từ Nhiều Người Toàn Kênh (`start!` / `!start` / `/noitu start` / nút bấm).
+   */
+  startChannelSession({
+    guildId,
+    channelId,
+    actorId,
+    actorName = '',
+    forceRestart = false,
+    customStartWord = null,
+    now = Date.now(),
+  }) {
+    this.assertEnabled();
+    const chId = String(channelId);
+    const existing = this.channelSessions.get(chId);
+
+    if (existing?.running && !forceRestart) {
+      return {
+        ok: false,
+        code: 'ALREADY_RUNNING',
+        session: existing,
+      };
+    }
+
+    const startWord = customStartWord
+      ? normalizeWord(customStartWord)
+      : this.dictionary.pickRandomStartWord();
+    const prefix = getLastToken(startWord);
+    const nextRoundNum = (existing?.roundNumber ?? 0) + 1;
+
+    const sess = {
+      channelId: chId,
+      guildId: String(guildId),
+      running: true,
+      roundNumber: nextRoundNum,
+      currentWord: startWord,
+      requiredPrefix: prefix,
+      lastPlayerId: null,
+      lastPlayerName: '',
+      words: [startWord],
+      usedWords: new Set([startWord]),
+      participants: new Set(),
+      turnCount: 0,
+      startedBy: actorId ? String(actorId) : 'SYSTEM',
+      startedByName: actorName || '',
+      startedAt: now,
+      updatedAt: now,
+    };
+
+    this.channelSessions.set(chId, sess);
+    this._persistChannelSession(sess);
+
+    return {
+      ok: true,
+      created: true,
+      session: sess,
+    };
+  }
+
+  /**
+   * Kết thúc ván Nối Từ chung hiện tại & tự động mở ngay ván mới (`stop!` / `!stop` / `/noitu stop`).
+   * - Quản trị viên (`canForceStop = true`) dừng & đổi từ được ngay lập tức.
+   * - Thành viên thường cũng đổi từ được ngay nếu ván đã bị kẹt quá 45 giây không ai nối được.
+   */
+  stopChannelSessionAndRestart({
+    guildId,
+    channelId,
+    actorId,
+    actorName = '',
+    canForceStop = false,
+    now = Date.now(),
+  }) {
+    this.assertEnabled();
+    const chId = String(channelId);
+    const existing = this.channelSessions.get(chId);
+
+    if (!existing || !existing.running) {
+      return {
+        ok: false,
+        code: 'NOT_RUNNING',
+      };
+    }
+
+    const idleMs = Math.max(0, now - (existing.updatedAt || existing.startedAt || 0));
+    if (!canForceStop && idleMs < CHANNEL_IDLE_PUBLIC_STOP_MS) {
+      const waitSec = Math.ceil((CHANNEL_IDLE_PUBLIC_STOP_MS - idleMs) / 1000);
+      return {
+        ok: false,
+        code: 'NEED_MOD_OR_WAIT',
+        waitSec,
+        session: existing,
+      };
+    }
+
+    const prevSnapshot = {
+      roundNumber: existing.roundNumber,
+      currentWord: existing.currentWord,
+      turnCount: existing.turnCount,
+      participantCount: existing.participants?.size ?? 0,
+    };
+
+    const started = this.startChannelSession({
+      guildId,
+      channelId: chId,
+      actorId,
+      actorName,
+      forceRestart: true,
+      now,
+    });
+
+    return {
+      ok: true,
+      previousSession: prevSnapshot,
+      session: started.session,
+    };
+  }
+
+  /**
+   * Xử lý tin nhắn nối từ trong chế độ Nhiều Người Toàn Kênh (giống hệt Neko):
+   * - Ai trong kênh cũng gõ từ 2 tiếng nối tiếp được ngay (không giới hạn số người!).
+   * - Chặn 1 người trả lời 2 lượt liên tiếp.
+   * - Bỏ qua các tin nhắn 1 chữ hoặc >= 3 chữ để không làm phiền câu trò chuyện ngắn.
+   * - Từ đúng: cộng thưởng nóng VNĐ + EXP, thả ✅.
+   * - Nếu từ vừa nối làm hết sạch đáp án trong từ điển: trao giải Chiến Thắng Ván + tự động mở ngay ván mới!
+   */
+  submitChannelWord({
+    guildId,
+    channelId,
+    userId,
+    username = '',
+    content,
+    now = Date.now(),
+  }) {
+    if (!this.isEnabled()) return null;
+    const chId = String(channelId);
+    const sess = this.channelSessions.get(chId);
+    if (!sess || !sess.running) return null;
+
+    const raw = String(content ?? '').trim();
+    if (!raw || /[\r\n]/.test(raw)) return null;
+
+    const norm = normalizeWord(raw);
+    if (!norm) return null;
+
+    const tokens = norm.split(' ').filter(Boolean);
+    // Giống Neko: chỉ bắt các tin nhắn đúng 2 tiếng tiếng Việt để không thả ❌ nhầm vào câu tán gẫu
+    if (tokens.length !== 2) return null;
+    if (!VALID_VI_SYLLABLE_RE.test(tokens[0]) || !VALID_VI_SYLLABLE_RE.test(tokens[1])) {
+      return null;
+    }
+
+    const uid = String(userId);
+
+    // 1. Không được tự nối 2 lượt liên tiếp
+    if (sess.lastPlayerId && sess.lastPlayerId === uid) {
+      return {
+        ok: false,
+        react: '❌',
+        code: 'SAME_PLAYER',
+        message: '⏳ Bạn đã trả lời lượt trước rồi, hãy đợi người chơi tiếp theo!',
+        session: sess,
+      };
+    }
+
+    // 2. Phải bắt đầu đúng bằng tiếng cuối của từ liền trước
+    if (sess.requiredPrefix && tokens[0] !== sess.requiredPrefix) {
+      return {
+        ok: false,
+        react: '❌',
+        code: 'WRONG_PREFIX',
+        requiredPrefix: sess.requiredPrefix,
+        message: `❌ Từ này không bắt đầu với tiếng **\`${sess.requiredPrefix}\`**!`,
+        session: sess,
+      };
+    }
+
+    // 3. Từ đã được sử dụng trong ván hiện tại
+    if (sess.usedWords.has(norm)) {
+      return {
+        ok: false,
+        react: '❌',
+        code: 'ALREADY_USED',
+        word: norm,
+        message: `⚠️ Từ **\`${norm}\`** đã được sử dụng trong ván này!`,
+        session: sess,
+      };
+    }
+
+    // 4. Kiểm tra trong kho từ điển tiếng Việt
+    const entry = this.dictionary.getEntry(norm);
+    if (!entry || !entry.valid) {
+      return {
+        ok: false,
+        react: '❌',
+        code: 'NOT_IN_DICTIONARY',
+        word: norm,
+        message: `📖 Từ **\`${norm}\`** chưa có trong từ điển tiếng Việt! *(Gõ \`/noitu them-tu\` nếu muốn bổ sung)*`,
+        session: sess,
+      };
+    }
+
+    // 5. HỢP LỆ! Cập nhật trạng thái ván & cộng thưởng từ đúng
+    sess.words.push(norm);
+    sess.usedWords.add(norm);
+    sess.currentWord = norm;
+    sess.requiredPrefix = entry.lastToken;
+    sess.lastPlayerId = uid;
+    sess.lastPlayerName = username;
+    sess.turnCount += 1;
+    sess.participants.add(uid);
+    sess.updatedAt = now;
+
+    const cfg = this.getConfig();
+    const perWordReward = Math.max(50, Math.min(500, Math.floor(cfg.baseReward / 5) || 200));
+    const canContinue = hasPossibleNextWord(norm, sess.usedWords, this.dictionary);
+
+    if (canContinue) {
+      this.db.transaction(() => {
+        const u = this.economySystem.ensureUser(uid, username, now);
+        const balAfter = u.wallet + perWordReward;
+        this.db.run(
+          'UPDATE users SET wallet = ?, total_earned = total_earned + ?, updated_at = ? WHERE user_id = ?',
+          [balAfter, perWordReward, now, uid]
+        );
+        this._ensurePlayerStatsRow(uid, username, now);
+        this.db.run(
+          `UPDATE noitu_stats
+           SET total_turns_played = total_turns_played + 1,
+               total_vnd_earned = total_vnd_earned + ?,
+               updated_at = ?
+           WHERE user_id = ?`,
+          [perWordReward, now, uid]
+        );
+        this._persistChannelSession(sess);
+      });
+
+      this.levelSystem?.grantExp?.(uid, 8, now);
+      this.questSystem?.incrementMetric?.(uid, 'play_noitu', 1, now);
+      this.questSystem?.incrementMetric?.(uid, 'vnd_earned', perWordReward, now);
+
+      return {
+        ok: true,
+        finished: false,
+        react: '✅',
+        word: norm,
+        nextPrefix: entry.lastToken,
+        wordReward: perWordReward,
+        turnCount: sess.turnCount,
+        participantCount: sess.participants.size,
+        session: sess,
+      };
+    }
+
+    // 6. HẾT ĐƯỜNG NỐI TIẾP -> NGƯỜI CHƠI NÀY CHIẾN THẮNG VÁN CHUNG & TỰ MỞ NGAY VÁN MỚI!
+    const finishedRoundNumber = sess.roundNumber;
+    const finishedTurnCount = sess.turnCount;
+    const finishedParticipants = Array.from(sess.participants);
+
+    const winSummary = this.db.transaction(() => {
+      const winnerUser = this.economySystem.ensureUser(uid, username, now);
+      const statsRow = this._ensurePlayerStatsRow(uid, username, now);
+      const newStreak = (statsRow.current_streak || 0) + 1;
+      const newBestStreak = Math.max(statsRow.best_streak || 0, newStreak);
+
+      let streakBonusVnd = 0;
+      if (newStreak === 3) streakBonusVnd = cfg.streak3Bonus;
+      else if (newStreak === 5) streakBonusVnd = cfg.streak5Bonus;
+      else if (newStreak >= 10 && newStreak % 10 === 0) streakBonusVnd = cfg.streak10Bonus;
+
+      const lengthBonusVnd = Math.min(5_000, finishedTurnCount * 100);
+      const totalRewardVnd = perWordReward + cfg.baseReward + lengthBonusVnd + streakBonusVnd;
+      const balAfter = winnerUser.wallet + totalRewardVnd;
+
+      this.db.run(
+        `UPDATE users
+         SET wallet = ?,
+             total_earned = total_earned + ?,
+             games_played = games_played + 1,
+             games_won = games_won + 1,
+             updated_at = ?
+         WHERE user_id = ?`,
+        [balAfter, totalRewardVnd, now, uid]
+      );
+
+      this.db.run(
+        `UPDATE noitu_stats
+         SET total_matches = total_matches + 1,
+             wins = wins + 1,
+             current_streak = ?,
+             best_streak = ?,
+             total_turns_played = total_turns_played + 1,
+             total_vnd_earned = total_vnd_earned + ?,
+             last_match_at = ?,
+             updated_at = ?
+         WHERE user_id = ?`,
+        [newStreak, newBestStreak, totalRewardVnd, now, now, uid]
+      );
+
+      for (const pid of finishedParticipants) {
+        if (pid === uid) continue;
+        this._ensurePlayerStatsRow(pid, '', now);
+        this.db.run(
+          'UPDATE noitu_stats SET total_matches = total_matches + 1, last_match_at = ?, updated_at = ? WHERE user_id = ?',
+          [now, now, pid]
+        );
+      }
+
+      this.db.run(
+        `INSERT INTO transactions (user_id, counterparty_id, type, amount, balance_after, note, created_at)
+         VALUES (?, 'CHANNEL_NOITU', 'noitu_win', ?, ?, ?, ?)`,
+        [
+          uid,
+          totalRewardVnd,
+          balAfter,
+          `Thắng Nối Từ Toàn Kênh Ván #${finishedRoundNumber} với từ "${norm}" (${finishedTurnCount} lượt)`,
+          now,
+        ]
+      );
+
+      return {
+        totalRewardVnd,
+        streakBonusVnd,
+        newStreak,
+        newBestStreak,
+      };
+    });
+
+    this.levelSystem?.grantExp?.(uid, 35, now);
+    this.questSystem?.incrementMetric?.(uid, 'games_played', 1, now);
+    this.questSystem?.incrementMetric?.(uid, 'play_noitu', 1, now);
+    this.questSystem?.incrementMetric?.(uid, 'game_wins', 1, now);
+    this.questSystem?.incrementMetric?.(uid, 'vnd_earned', winSummary.totalRewardVnd, now);
+    this.eventSystem?.recordProgress?.(uid, 'noitu_event', 1, now);
+
+    const winRow = this.db.get('SELECT wins FROM noitu_stats WHERE user_id = ?', [uid]);
+    if ((winRow?.wins ?? 0) >= 10) {
+      this.levelSystem?.unlockSpecificTitle?.(uid, 'vua_noi_tu');
+    }
+
+    // Tự động mở ngay ván nối từ mới với từ mở đầu mới (liền mạch 100% giống Neko!)
+    const nextStarted = this.startChannelSession({
+      guildId,
+      channelId: chId,
+      actorId: 'SYSTEM',
+      actorName: 'Tự Động',
+      forceRestart: true,
+      now,
+    });
+
+    return {
+      ok: true,
+      finished: true,
+      react: '✅',
+      winnerId: uid,
+      winnerName: username,
+      winningWord: norm,
+      roundNumber: finishedRoundNumber,
+      turnsPlayed: finishedTurnCount,
+      participantCount: finishedParticipants.length,
+      totalRewardVnd: winSummary.totalRewardVnd,
+      streakBonusVnd: winSummary.streakBonusVnd,
+      newStreak: winSummary.newStreak,
+      nextSession: nextStarted.session,
+    };
   }
 
   /**

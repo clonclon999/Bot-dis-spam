@@ -176,7 +176,7 @@ export async function handleInteractionCreate(interaction, context) {
         interaction.commandName === 'game' ||
         isSharedMpSlash ||
         (interaction.commandName === GAME_IDS.NOITU &&
-          ['create', 'join', 'start', 'surrender'].includes(
+          ['create', 'join', 'start', 'stop', 'surrender'].includes(
             interaction.options?.getSubcommand?.(false)
           ));
 
