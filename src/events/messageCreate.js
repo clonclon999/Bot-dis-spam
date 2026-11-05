@@ -1,5 +1,7 @@
 import { PermissionsBitField } from 'discord.js';
 import {
+  buildChannelInvalidWordPayload,
+  buildChannelLiveStepPayload,
   buildChannelStartPayload,
   buildChannelWinAndNextPayload,
   buildInvalidWordPayload,
@@ -137,21 +139,7 @@ export async function handleMessageCreate(message, context) {
               actorId: message.author.id,
               actorName: message.author.username,
             });
-            if (!res.ok && res.code === 'ALREADY_RUNNING') {
-              const remind = await message.channel
-                ?.send?.(
-                  buildCv2NoticePayload({
-                    title: `🟢 Trò Chơi Vẫn Đang Tiếp Tục (Ván #${res.session.roundNumber})`,
-                    body:
-                      `🎯 **Từ hiện tại:** **\`${res.session.currentWord}\`** ➔ Hãy nối tiếp bằng **\`${capitalizeVi(res.session.requiredPrefix)} ...\`**!\n` +
-                      `*(Bạn có thể gõ \`stop!\` nếu muốn kết thúc và đổi sang từ mới)*`,
-                    accentColor: THEME.NEON_CYAN,
-                  })
-                )
-                .catch(() => null);
-              if (remind) globalPanelCleaner.scheduleAutoDelete(remind, 8_000);
-              return;
-            }
+            // Dù ván mới tạo hay đang chạy sẵn, luôn ghim lại bảng từ hiện tại xuống ĐÁY KÊNH và xóa bảng cũ ở trên!
             const sent = await message.channel
               ?.send?.(buildChannelStartPayload(res.session))
               .catch(() => null);
@@ -280,15 +268,9 @@ export async function handleMessageCreate(message, context) {
             if (!wordRes.ok) {
               await message.react?.('❌')?.catch(() => {});
               const hint = await message.channel
-                ?.send?.(
-                  buildCv2NoticePayload({
-                    title: '❌ Chưa Hợp Lệ',
-                    body: wordRes.message,
-                    accentColor: THEME.CRIMSON_NEON,
-                  })
-                )
+                ?.send?.(buildChannelInvalidWordPayload(wordRes, message.author.id))
                 .catch(() => null);
-              if (hint) globalPanelCleaner.scheduleAutoDelete(hint, 4_000);
+              if (hint) globalPanelCleaner.scheduleAutoDelete(hint, 5_000);
               return;
             }
 
@@ -303,6 +285,18 @@ export async function handleMessageCreate(message, context) {
                   message.channel.id,
                   'noitu_chan_round',
                   winSent
+                );
+              }
+            } else {
+              // Ghim thẻ Từ Hiện Tại siêu gọn xuống ngay ĐÁY KÊNH và xóa thẻ cũ ở trên -> không bao giờ bị trôi bảng!
+              const stepSent = await message.channel
+                ?.send?.(buildChannelLiveStepPayload(wordRes, message.author.id))
+                .catch(() => null);
+              if (stepSent) {
+                await globalPanelCleaner.registerChannelBoard(
+                  message.channel.id,
+                  'noitu_chan_round',
+                  stepSent
                 );
               }
             }

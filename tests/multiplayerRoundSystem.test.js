@@ -303,7 +303,7 @@ describe('UPDATE PRO MAX – MULTIPLAYER ROUND SYSTEM & PREMIUM 3D VISUALS (PUBL
     }
   });
 
-  it('3. Dùng chung 1 kết quả duy nhất & Toán trả thưởng chính xác 100%: Bầu Cua (2x/3x/4x), Tài Xỉu (2x & Luật 3/18 Nhà cái thắng), Đua Thú (4.5x) & Phiên rỗng 0 giao dịch', async () => {
+  it('3. Dùng chung 1 kết quả duy nhất & Toán trả thưởng chính xác 100%: Bầu Cua (2x/3x/4x), Tài Xỉu (2x & Luật 3/18 Nhà cái thắng), Đua Thú Top 1-2-3 (2.4x/1.4x/1.1x) & Phiên rỗng 0 giao dịch', async () => {
     const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'mp-payout-math-'));
     try {
       const db = new GameDatabase(tmpDir);
@@ -444,8 +444,10 @@ describe('UPDATE PRO MAX – MULTIPLAYER ROUND SYSTEM & PREMIUM 3D VISUALS (PUBL
         assert.equal(economySystem.ensureUser('p3').wallet, 85_000, 'Tổng 18 Nhà cái thắng');
         assert.equal(economySystem.ensureUser('p4').wallet, 85_000, 'Tổng 18 Nhà cái thắng');
 
-        // --- C. ĐUA THÚ: Hạng #1 nhận 4.5x hoàn trả ---
-        db.run('UPDATE users SET wallet = 100000 WHERE user_id = ?', ['p1']);
+        // --- C. ĐUA THÚ: Top 1 nhận 2.4x (nhiều nhất), Top 2 nhận 1.4x, Top 3 nhận 1.1x, Hạng 4–5 = 0x ---
+        for (const uid of ['p1', 'p2', 'p3', 'p4']) {
+          db.run('UPDATE users SET wallet = 100000 WHERE user_id = ?', [uid]);
+        }
         const raceRound = await mp.startRound({
           guildId: 'g-math',
           channelId: 'c-race',
@@ -453,6 +455,9 @@ describe('UPDATE PRO MAX – MULTIPLAYER ROUND SYSTEM & PREMIUM 3D VISUALS (PUBL
           userId: 'p1',
         });
         await mp.placeBet({ roundId: raceRound.round.round_id, userId: 'p1', choice: 'eagle', amount: 10_000 });
+        await mp.placeBet({ roundId: raceRound.round.round_id, userId: 'p2', choice: 'horse', amount: 10_000 });
+        await mp.placeBet({ roundId: raceRound.round.round_id, userId: 'p3', choice: 'cheetah', amount: 10_000 });
+        await mp.placeBet({ roundId: raceRound.round.round_id, userId: 'p4', choice: 'wolf', amount: 10_000 });
         db.run(
           'UPDATE multiplayer_rounds SET status = ?, result_json = ? WHERE round_id = ?',
           [
@@ -467,7 +472,10 @@ describe('UPDATE PRO MAX – MULTIPLAYER ROUND SYSTEM & PREMIUM 3D VISUALS (PUBL
           ]
         );
         await mp.finalizeRound(raceRound.round.round_id, { skipAnimation: true });
-        assert.equal(economySystem.ensureUser('p1').wallet, 135_000, 'Đua Thú hạng 1 nhận 4.5x (90k + 45k = 135k)');
+        assert.equal(economySystem.ensureUser('p1').wallet, 114_000, 'Đua Thú Hạng 1 nhận 2.4x (90k + 24k = 114k)');
+        assert.equal(economySystem.ensureUser('p2').wallet, 104_000, 'Đua Thú Hạng 2 nhận 1.4x (90k + 14k = 104k)');
+        assert.equal(economySystem.ensureUser('p3').wallet, 101_000, 'Đua Thú Hạng 3 nhận 1.1x (90k + 11k = 101k)');
+        assert.equal(economySystem.ensureUser('p4').wallet, 90_000, 'Đua Thú Hạng 4 không lọt Top 3 mất cược');
 
         // --- D. PHIÊN KHÔNG CÓ NGƯỜI ĐẶT CƯỢC: Kết thúc sạch, 0 phát sinh giao dịch ---
         const txCountBefore = db.get('SELECT COUNT(*) AS cnt FROM transactions').cnt;

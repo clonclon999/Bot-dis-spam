@@ -923,7 +923,7 @@ export function buildGuessBoardPayload(user, systems, { ephemeral = false } = {}
       .setStyle(difficulty === 'medium' ? ButtonStyle.Primary : ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`vgame:guess:pick:${user.id}:hard`)
-      .setLabel('Khó (1–100 • 6 lượt)')
+      .setLabel('Khó (1–100 • 5 lượt)')
       .setEmoji('🔴')
       .setStyle(difficulty === 'hard' ? ButtonStyle.Danger : ButtonStyle.Secondary)
   );
@@ -1079,7 +1079,7 @@ export function buildRaceBoardPayload(user, systems, { ephemeral = false } = {})
 
   const chosen = RACE_ANIMALS.find((a) => a.id === animalId) || RACE_ANIMALS[0];
   const rosterGallery = buildRaceRosterGalleryAssets(chosen.id);
-  const choiceLabel = `${chosen.emoji} **${chosen.name}** *(Về Nhất nhận thưởng **4.5x** tiền cược)*`;
+  const choiceLabel = `${chosen.emoji} **${chosen.name}** *(🥇 #1: **2.4x** • 🥈 #2: **1.4x** • 🥉 #3: **1.1x**)*`;
   const canConfirm = betAmount >= minBet && betAmount <= maxBet && wallet >= betAmount;
 
   const trackPreview = RACE_ANIMALS.map(
@@ -1090,7 +1090,7 @@ export function buildRaceBoardPayload(user, systems, { ephemeral = false } = {})
   const paddockContainer = createContainer({
     accentColor: THEME.CYBER_EMERALD,
     children: [
-      textDisplay(`## 🐎 TRƯỜNG ĐUA THÚ TỐC ĐỘ GRAND PRIX (THƯỞNG 4.5X)`),
+      textDisplay(`## 🐎 TRƯỜNG ĐUA THÚ TỐC ĐỘ (🥇 2.4X • 🥈 1.4X • 🥉 1.1X)`),
       mediaGallery(rosterGallery.items),
       separator(),
       textDisplay(`${trackPreview}\n\n${formatBettingSummaryBlock({ wallet, minBet, maxBet, betAmount, choiceLabel })}`),
@@ -1167,7 +1167,13 @@ async function runRaceConfirmedRound(editFn, user, animalId, betAmount, systems)
     res.won ? ASSET_PATHS.RACE_WIN : ASSET_PATHS.RACE_LOSE,
     res.won ? 'race_win.png' : 'race_lose.png'
   );
-  const medals = ['🥇 Hạng 1', '🥈 Hạng 2', '🥉 Hạng 3', '4️⃣ Hạng 4', '5️⃣ Hạng 5'];
+  const medals = [
+    '🥇 Hạng 1 (2.4x)',
+    '🥈 Hạng 2 (1.4x)',
+    '🥉 Hạng 3 (1.1x)',
+    '4️⃣ Hạng 4 (0x)',
+    '5️⃣ Hạng 5 (0x)',
+  ];
   const podiumLines = res.standings.map(
     (a, idx) => `${medals[idx]}: **${a.emoji} ${a.name}**${a.id === res.chosen.id ? ' ⭐ *(Bạn chọn)*' : ''}`
   );
@@ -1189,8 +1195,8 @@ async function runRaceConfirmedRound(editFn, user, animalId, betAmount, systems)
         `### 🏆 Bảng Vị Trí Cán Đích & Thanh Toán\n` +
           `${podiumLines.join('\n')}\n\n` +
           (res.won
-            ? `🎉 **THẮNG ĐẬM 4.5X:** Nhận **${formatVnd(res.payout)}** *(Lãi ròng +${formatVnd(res.net)})*`
-            : `💸 **CHƯA TRÚNG:** Thú bạn chọn chưa về nhất (-${formatVnd(res.totalBet)})`) +
+            ? `🎉 **THẮNG BỤC HẠNG #${res.rank} (${res.multiplier}X):** Nhận **${formatVnd(res.payout)}** *(Lãi ròng +${formatVnd(res.net)})*`
+            : `💸 **CHƯA LỌT TOP 3 (Hạng #${res.rank}):** Thú bạn chọn về ngoài Top 3 (-${formatVnd(res.totalBet)})`) +
           `\n💰 **Số dư ví mới:** **${formatVnd(res.balanceAfter)}**`
       ),
       separator(),
@@ -1413,7 +1419,7 @@ const guessCommand = {
         .addChoices(
           { name: '🟢 Dễ (1 – 20 • 4 lượt)', value: 'easy' },
           { name: '🟡 Trung bình (1 – 50 • 5 lượt)', value: 'medium' },
-          { name: '🔴 Khó (1 – 100 • 6 lượt)', value: 'hard' }
+          { name: '🔴 Khó (1 – 100 • 5 lượt)', value: 'hard' }
         )
     )
     .addIntegerOption((o) =>
@@ -1438,7 +1444,7 @@ const guessCommand = {
 const raceCommand = {
   data: new SlashCommandBuilder()
     .setName('race')
-    .setDescription('Mở hoặc tham gia ngay Phiên Đua Thú 3D chung toàn Server (thưởng 4.5x, đếm ngược 3-2-1)')
+    .setDescription('Mở hoặc tham gia Phiên Đua Thú 3D (Hạng 1: 2.4x • Top 2: 1.4x • Top 3: 1.1x, đếm ngược 3-2-1)')
     .setContexts(InteractionContextType.Guild)
     .addStringOption((o) =>
       o

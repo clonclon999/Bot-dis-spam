@@ -75,7 +75,7 @@ const MP_GAME_META = Object.freeze({
     animPath: ASSET_PATHS.RACE_RUN_GIF,
     animName: 'mp_race_run.gif',
     compactRules:
-      '📖 **Luật chuẩn Đua Thú:** Chọn **1 hoặc nhiều chiến thú** trên 5 làn đua. Cả phiên cùng xem chung 1 cuộc đua công bằng: Chiến thú cán đích **Hạng #1** trả thưởng **4.5x tiền cược**!',
+      '📖 **Luật Đua Thú (Top 1•2•3 Có Thưởng):** Chọn **1 hoặc nhiều chiến thú** trên 5 làn đua. Cả phiên cùng xem chung 1 cuộc đua công bằng: 🥇 **Hạng #1 nhận 2.4x** *(ăn nhiều nhất)* • 🥈 **Hạng #2 nhận 1.4x** • 🥉 **Hạng #3 nhận 1.1x** *(Hạng 4–5 không trúng)*!',
   }),
 });
 
@@ -547,12 +547,20 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
     const podiumStr = rankIds
       .map((id, idx) => {
         const a = RACE_ANIMAL_MAP[id];
-        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
-        return `${medal} ${a ? `${a.emoji} **${a.name}**` : id}`;
+        const medal =
+          idx === 0
+            ? '🥇'
+            : idx === 1
+              ? '🥈'
+              : idx === 2
+                ? '🥉'
+                : `#${idx + 1}`;
+        const multTag = idx === 0 ? ' *(2.4x)*' : idx === 1 ? ' *(1.4x)*' : idx === 2 ? ' *(1.1x)*' : '';
+        return `${medal} ${a ? `${a.emoji} **${a.name}**` : id}${multTag}`;
       })
       .join('  •  ');
     resultHeadline = [
-      `🎯 **Quán quân về đích Hạng #1:** ${formatChoiceLabel(GAME_IDS.RACE, result.winnerId)} *(Nhận **4.5x** tiền cược)*`,
+      `🎯 **Quán quân Hạng #1:** ${formatChoiceLabel(GAME_IDS.RACE, result.winnerId)} *(2.4x)* • **Top 2 nhận 1.4x** • **Top 3 nhận 1.1x**`,
       `🏁 **Thứ hạng chung cuộc:** ${podiumStr}`,
     ].join('\n');
   }

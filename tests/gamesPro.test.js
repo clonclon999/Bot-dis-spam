@@ -61,7 +61,31 @@ describe('All 6 Fair Crypto-RNG Games (Bầu Cua, Tài Xỉu, Coinflip, Guess, R
         });
         assert.ok(['sap', 'ngua'].includes(cf.resultSide));
 
-        // 4. Đoán số (Guess)
+        // 4. Đoán số (Guess) — Tối đa không vượt quá 5 lượt đoán ở mọi độ khó
+        assert.equal(gameSystem.getGuessModeConfig('easy').maxAttempts, 4);
+        assert.equal(gameSystem.getGuessModeConfig('medium').maxAttempts, 5);
+        assert.equal(gameSystem.getGuessModeConfig('hard').maxAttempts, 5);
+
+        const hardSess = gameSystem.startGuessSession({
+          userId: 'player-1',
+          username: 'GamerOne',
+          difficulty: 'hard',
+          bet: 2_000,
+        });
+        assert.equal(hardSess.maxAttempts, 5);
+        // Đoán sai đủ 5 lượt trên chế độ Khó -> kết thúc ván đúng ở lượt thứ 5
+        const wrongVal = hardSess.secret === 1 ? 2 : 1;
+        let lastStep = null;
+        for (let i = 1; i <= 5; i += 1) {
+          lastStep = gameSystem.submitGuessTurn({
+            userId: 'player-1',
+            username: 'GamerOne',
+            guessNumber: wrongVal,
+          });
+        }
+        assert.equal(lastStep.finished, true);
+        assert.equal(lastStep.won, false);
+
         const gs = gameSystem.playGuess({
           userId: 'player-1',
           username: 'GamerOne',
@@ -71,7 +95,7 @@ describe('All 6 Fair Crypto-RNG Games (Bầu Cua, Tài Xỉu, Coinflip, Guess, R
         });
         assert.ok(gs.secret >= 1 && gs.secret <= 5);
 
-        // 5. Đua thú (Race) kèm 3 khung hình trực tiếp
+        // 5. Đua thú (Race) kèm 3 khung hình trực tiếp & trả thưởng bục Top 1–2–3 (2.4x / 1.4x / 1.1x)
         const rc = gameSystem.playRace({
           userId: 'player-1',
           username: 'GamerOne',
@@ -80,6 +104,11 @@ describe('All 6 Fair Crypto-RNG Games (Bầu Cua, Tài Xỉu, Coinflip, Guess, R
         });
         assert.equal(rc.frames.length, 3);
         assert.ok(rc.winner.id);
+        assert.ok(rc.rank >= 1 && rc.rank <= 5);
+        if (rc.rank === 1) assert.equal(rc.multiplier, 2.4);
+        else if (rc.rank === 2) assert.equal(rc.multiplier, 1.4);
+        else if (rc.rank === 3) assert.equal(rc.multiplier, 1.1);
+        else assert.equal(rc.multiplier, 0);
 
         // 6. Oẳn Tù Tì PvE & PvP (chuyển tiền nguyên tử giữa 2 người chơi)
         const rpsBot = gameSystem.playRpsBot({

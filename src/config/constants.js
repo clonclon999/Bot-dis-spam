@@ -125,14 +125,14 @@ export const GAME_CATALOG = Object.freeze({
   }),
   noitu: Object.freeze({
     id: 'noitu',
-    name: 'Nối Từ Tiếng Việt (Game Show 1v1)',
+    name: 'Nối Từ Tiếng Việt Đông Người',
     emoji: '🔤',
     command: '/noitu',
-    shortDesc: 'Game Show đối kháng 2 người chơi với đồng hồ đếm ngược 30 giây và từ điển nội bộ tốc độ cao.',
+    shortDesc: 'Cả kênh cùng nối từ tiếng Việt không giới hạn người chơi (start! | stop!), tự ghim từ hiện tại ở đáy kênh chống trôi.',
     rules: [
-      '• Hai người chơi đối đầu trực tiếp trong phòng riêng, hiển thị Avatar, thanh lượt chơi và lịch sử từ đã dùng.',
-      '• Nhập từ ghép tiếng Việt 2 tiếng hợp lệ bắt đầu bằng tiếng cuối của từ hiện tại trong vòng **30 giây**.',
-      '• Không được dùng lại từ đã xuất hiện; nếu đối thủ hết giờ hoặc từ khóa cuối không còn từ nối tiếp trong từ điển, bạn **Thắng Tuyệt Đối**!',
+      '• Gõ trực tiếp từ ghép **2 tiếng** tiếng Việt hợp lệ bắt đầu bằng tiếng cuối của từ hiện tại ngay trong kênh `#nối-từ`.',
+      '• Không giới hạn số người tham gia! Đúng thả **✅** (+VNĐ/từ) và tự ghim bảng từ mới xuống cuối kênh; sai thả **❌** báo rõ lý do.',
+      '• Khi nối được từ khóa cuối khiến từ điển không còn từ nối tiếp, bạn **Thắng Ván** nhận thưởng lớn và tự động mở ván mới!',
     ].join('\n'),
   }),
   rps: Object.freeze({
@@ -149,14 +149,14 @@ export const GAME_CATALOG = Object.freeze({
   }),
   guess: Object.freeze({
     id: 'guess',
-    name: 'Đoán Số Bí Ẩn',
+    name: 'Đoán Số Bí Ẩn (Tối Đa 5 Lượt)',
     emoji: '🔢',
     command: '/guess',
-    shortDesc: 'Giải mã con số ngẫu nhiên của Bot với giới hạn lượt đoán và gợi ý Lớn Hơn / Nhỏ Hơn.',
+    shortDesc: 'Giải mã con số ngẫu nhiên của Bot trong tối đa 5 lượt đoán với gợi ý Lớn Hơn / Nhỏ Hơn.',
     rules: [
-      '• Chọn độ khó và xác nhận mức cược VNĐ để Bot khởi tạo con số bí mật ngẫu nhiên.',
-      '• Bạn có số lượt đoán giới hạn; mỗi lần đoán chưa trúng, Bot sẽ gợi ý con số bí mật **LỚN HƠN** hay **NHỎ HƠN**.',
-      '• Đoán đúng trong giới hạn lượt sẽ chạy hiệu ứng mở két và trả thưởng VNĐ tự động!',
+      '• Chọn độ khó (`Dễ 1–20: 4 lượt` • `TB 1–50: 5 lượt` • `Khó 1–100: 5 lượt`) và xác nhận mức cược VNĐ.',
+      '• Bạn có tối đa **5 lượt đoán**; mỗi lần chưa trúng, Bot gợi ý con số bí mật **LỚN HƠN** hay **NHỎ HƠN**.',
+      '• Đoán trúng trong giới hạn lượt sẽ mở két kho báu nhận thưởng tới **3.5x** VNĐ!',
     ].join('\n'),
   }),
   coinflip: Object.freeze({
@@ -172,14 +172,14 @@ export const GAME_CATALOG = Object.freeze({
   }),
   race: Object.freeze({
     id: 'race',
-    name: 'Đua Thú Tốc Độ',
+    name: 'Đua Thú Tốc Độ (Top 1•2•3 Có Thưởng)',
     emoji: '🐎',
     command: '/race',
-    shortDesc: 'Chọn chiến thú yêu thích và theo dõi đường đua nhiều chặng trực tiếp tới vạch đích.',
+    shortDesc: 'Chọn chiến thú tranh tài 5 làn đua: Hạng 1 ăn đậm 2.4x, Top 2 (1.4x) và Top 3 (1.1x) vẫn thắng tiền!',
     rules: [
-      '• Chọn 1 trong 5 chiến thú (`Chiến Mã`, `Báo Đốm`, `Đại Bàng`, `Sói Bạc`, `Hổ Trắng`) và xác nhận tiền cược VNĐ.',
-      '• Cuộc đua diễn ra theo từng giai đoạn tăng tốc với thanh tiến trình trực tiếp (không hiện kết quả ngay lập tức).',
-      '• Chiến thú bạn chọn cán đích **Hạng Nhất (#1)** nhận thưởng **4.5x** tiền cược!',
+      '• Chọn chiến thú (`Chiến Mã`, `Báo Đốm`, `Đại Bàng`, `Sói Bạc`, `Hổ Trắng`) và đặt cược VNĐ.',
+      '• Cuộc đua diễn ra gay cấn qua từng chặng tới vạch đích để xếp hạng Top 1–5.',
+      '• **Cơ cấu thưởng Top 1–2–3:** 🥇 **Hạng #1 nhận 2.4x** *(ăn nhiều nhất)* • 🥈 **Hạng #2 nhận 1.4x** • 🥉 **Hạng #3 nhận 1.1x** *(Hạng 4–5 không trúng)*.',
     ].join('\n'),
   }),
 });
@@ -206,6 +206,19 @@ export const RACE_ANIMALS = Object.freeze([
   Object.freeze({ id: 'wolf', name: 'Sói Bạc', emoji: '🐺' }),
   Object.freeze({ id: 'tiger', name: 'Hổ Trắng', emoji: '🐅' }),
 ]);
+
+/**
+ * Hệ số trả thưởng Đua Thú theo bục Top 1–2–3:
+ * - 🥇 Hạng #1: 2.4x (ăn nhiều nhất, lãi ròng +140%)
+ * - 🥈 Hạng #2: 1.4x (vẫn có tiền thắng, lãi ròng +40%)
+ * - 🥉 Hạng #3: 1.1x (vẫn có tiền thắng, lãi ròng +10%)
+ * Tổng 3 bục = 4.9x < 5.0x => triệt tiêu 100% kẽ hở đặt rải đều 5 cửa trục lợi!
+ */
+export const RACE_PODIUM_MULTIPLIERS = Object.freeze({
+  1: 2.4,
+  2: 1.4,
+  3: 1.1,
+});
 
 export const RACE_ANIMAL_MAP = Object.freeze(
   Object.fromEntries(RACE_ANIMALS.map((a) => [a.id, a]))

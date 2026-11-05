@@ -5,6 +5,7 @@ import {
   GAME_LABELS,
   LOG_CATEGORIES,
   RACE_ANIMALS,
+  RACE_PODIUM_MULTIPLIERS,
   RPS_CHOICES,
 } from '../config/constants.js';
 import { formatVnd } from '../utils/format.js';
@@ -438,7 +439,7 @@ export class GameSystem {
     const modes = {
       easy: { id: 'easy', max: 20, maxAttempts: 4, mult: 2.2, label: 'Dễ (1 – 20 • 4 lượt)' },
       medium: { id: 'medium', max: 50, maxAttempts: 5, mult: 2.8, label: 'Trung bình (1 – 50 • 5 lượt)' },
-      hard: { id: 'hard', max: 100, maxAttempts: 6, mult: 3.5, label: 'Khó (1 – 100 • 6 lượt)' },
+      hard: { id: 'hard', max: 100, maxAttempts: 5, mult: 3.5, label: 'Khó (1 – 100 • 5 lượt)' },
     };
     return modes[difficulty] ?? modes.easy;
   }
@@ -736,8 +737,10 @@ export class GameSystem {
       }).join('\n');
     });
 
-    const won = chosen.id === winner.id;
-    const rawPayout = won ? Math.round(cleanBet * 4.5) : 0;
+    const rank = standings.findIndex((a) => a.id === chosen.id) + 1;
+    const multiplier = RACE_PODIUM_MULTIPLIERS[rank] || 0;
+    const won = multiplier > 0;
+    const rawPayout = won ? Math.round(cleanBet * multiplier) : 0;
 
     const settled = this._settleSinglePlayerGame({
       userId,
@@ -746,11 +749,11 @@ export class GameSystem {
       totalBet: cleanBet,
       rawPayout,
       won,
-      detail: `Chọn ${chosen.name}, về nhất: ${winner.name}`,
+      detail: `Chọn ${chosen.name} (về Hạng #${rank}${won ? `, thưởng ${multiplier}x` : ''}), quán quân: ${winner.name}`,
       now,
     });
 
-    return { ...settled, chosen, winner, standings, frames };
+    return { ...settled, chosen, winner, standings, rank, multiplier, frames };
   }
 
   // ==========================================================================

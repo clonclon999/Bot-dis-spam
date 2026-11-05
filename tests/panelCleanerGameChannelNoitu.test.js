@@ -178,8 +178,87 @@ describe('Auto-Delete Previous Panels & Strict Per-Game Channel Enforcement (All
           systems
         );
         assert.equal(validateCv2Payload(okNoitu).valid, true);
-        assert.match(extractCv2Text(okNoitu), /NỐI TỪ TIẾNG VIỆT PRO/);
+        assert.match(extractCv2Text(okNoitu), /NỐI TỪ TIẾNG VIỆT ĐÔNG NGƯỜI/);
+
+        // 7. Kiểm chứng chống trôi bảng Nối Từ & báo đúng/sai rõ ràng:
+        // Mỗi lượt nối đúng tự xóa thẻ cũ ở trên và chỉ giữ DUY NHẤT 1 thẻ Từ Hiện Tại ở cuối kênh!
+        const liveMessages = [];
+        const deletedBoardIds = [];
+        let msgSeq = 0;
+        const mockNoituChan = {
+          id: 'chan-noitu',
+          parentId: null,
+          send: async (payload) => {
+            msgSeq += 1;
+            const id = `nt-msg-${msgSeq}`;
+            const m = {
+              id,
+              payload,
+              deleted: false,
+              delete: async () => {
+                m.deleted = true;
+                deletedBoardIds.push(id);
+              },
+            };
+            liveMessages.push(m);
+            return m;
+          },
+        };
+
+        const { handleMessageCreate } = await import('../src/events/messageCreate.js');
+        const fireMsg = async (uid, content) => {
+          const reactions = [];
+          await handleMessageCreate(
+            {
+              author: { id: uid, username: uid, bot: false },
+              guild: { id: 'guild-strict' },
+              channel: mockNoituChan,
+              content,
+              mentions: { users: new Map(), roles: new Map(), everyone: false },
+              member: { permissions: { has: () => false } },
+              react: async (em) => reactions.push(em),
+            },
+            systems
+          );
+          return reactions;
+        };
+
+        // Gõ start! -> Ghim bảng mở ván đầu tiên
+        await fireMsg('uA', 'start!');
+        assert.equal(liveMessages.filter((m) => !m.deleted).length, 1);
+
+        // Cố tình đặt từ hiện tại về 'nhà cửa' để kiểm tra nối đúng liên tiếp & nối sai
+        const sess = systems.wordChainSystem.getChannelSession('chan-noitu');
+        sess.currentWord = 'nhà cửa';
+        sess.requiredPrefix = 'cửa';
+        sess.usedWords = new Set(['nhà cửa']);
+
+        // Nối đúng lượt 1 ('cửa sổ') -> Thả ✅, xóa ngay bảng cũ ở trên, ghim 1 bảng mới ở đáy kênh!
+        const r1 = await fireMsg('uB', 'cửa sổ');
+        assert.deepEqual(r1, ['✅']);
+        assert.equal(deletedBoardIds.length, 1, 'Bảng cũ phải được xóa ngay để không rác kênh');
+        const activeAfter1 = liveMessages.filter((m) => !m.deleted);
+        assert.equal(activeAfter1.length, 1, 'Chỉ duy nhất 1 bảng Từ Hiện Tại nằm ở đáy kênh');
+        assert.match(extractCv2Text(activeAfter1[0].payload), /CỬA SỔ/);
+        assert.match(extractCv2Text(activeAfter1[0].payload), /Sổ \.\.\./);
+
+        // Nối đúng lượt 2 ('sổ sách') -> Bảng trước tiếp tục bị xóa, bảng 'SỔ SÁCH' nằm ở đáy kênh!
+        const r2 = await fireMsg('uC', 'sổ sách');
+        assert.deepEqual(r2, ['✅']);
+        assert.equal(deletedBoardIds.length, 2);
+        const activeAfter2 = liveMessages.filter((m) => !m.deleted);
+        assert.equal(activeAfter2.length, 1);
+        assert.match(extractCv2Text(activeAfter2[0].payload), /SỔ SÁCH/);
+        assert.match(extractCv2Text(activeAfter2[0].payload), /Sách \.\.\./);
+
+        // Nối sai âm đầu ('nhà đất') -> Thả ❌ + phản hồi báo rõ lý do kèm nhắc từ hiện tại 'sổ sách'
+        const rWrong = await fireMsg('uD', 'nhà đất');
+        assert.deepEqual(rWrong, ['❌']);
+        const wrongMsg = liveMessages[liveMessages.length - 1];
+        assert.match(extractCv2Text(wrongMsg.payload), /sách/);
+        assert.match(extractCv2Text(wrongMsg.payload), /sổ sách/);
       } finally {
+        systems.wordChainSystem?.shutdownCleanup?.();
         await systems.db.close();
       }
     } finally {

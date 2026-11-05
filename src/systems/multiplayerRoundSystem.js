@@ -9,6 +9,7 @@ import {
   MULTIPLAYER_GAME_IDS,
   RACE_ANIMAL_MAP,
   RACE_ANIMALS,
+  RACE_PODIUM_MULTIPLIERS,
 } from '../config/constants.js';
 import { getUserBotRole, hasBotRole, isOwner } from '../utils/permissions.js';
 import { withUserLock } from '../utils/locks.js';
@@ -1885,11 +1886,21 @@ export class MultiplayerRoundSystem {
       };
     }
 
-    // Quy tắc Đua Thú: Chiến thú về Hạng #1 nhận 4.5x tiền cược
-    const won = bet.choice === result.winnerId;
-    const payout = won ? Math.round(stake * 4.5) : 0;
+    // Quy tắc Đua Thú Top 1–2–3:
+    // 🥇 Hạng #1 nhận 2.4x (ăn nhiều nhất) • 🥈 Hạng #2 nhận 1.4x • 🥉 Hạng #3 nhận 1.1x • Hạng 4–5 = 0x
+    const rankingIds =
+      Array.isArray(result.rankingIds) && result.rankingIds.length > 0
+        ? result.rankingIds
+        : [result.winnerId];
+    const idx = rankingIds.indexOf(bet.choice);
+    const rank = idx >= 0 ? idx + 1 : 99;
+    const multiplier = RACE_PODIUM_MULTIPLIERS[rank] || 0;
+    const won = multiplier > 0;
+    const payout = won ? Math.round(stake * multiplier) : 0;
     return {
       hits: won ? 1 : 0,
+      rank,
+      multiplier,
       payout,
       net: payout - stake,
       won,
