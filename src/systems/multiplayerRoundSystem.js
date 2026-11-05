@@ -85,6 +85,9 @@ export class MultiplayerRoundSystem {
     /** @type {Set<string>} roundIds currently inside finalize/cancel pipeline */
     this._finalizingRounds = new Set();
 
+    /** @type {Map<string, number>} roundId -> thời điểm bắt đầu chốt phiên (phát hiện treo) */
+    this._finalizingSince = new Map();
+
     /** @type {Map<string, ReturnType<typeof setTimeout>>} roundId -> coalesced render timer */
     this._renderDebounce = new Map();
 
@@ -1941,10 +1944,23 @@ export class MultiplayerRoundSystem {
   async finalizeRound(roundId, { skipAnimation = false, isRecoverySettlement = false } = {}) {
     const key = String(roundId);
     if (this._finalizingRounds.has(key)) {
-      return this.getRoundSnapshot(key);
+      // 🚑 TỰ CHỮA LÀNH: nếu phiên đã "đang chốt" quá 20 giây mà chưa xong
+      // (mạng Discord treo, rate-limit kẹt...) thì giải phóng khóa để chốt lại,
+      // tuyệt đối không để kết quả bị đứng yên vĩnh viễn.
+      const since = this._finalizingSince.get(key) ?? 0;
+      if (this._now() - since < 20_000) {
+        return this.getRoundSnapshot(key);
+      }
+      logger.error(
+        'MultiplayerRoundSystem',
+        `Phát hiện phiên #${key} bị treo ở bước chốt kết quả quá 20 giây — tự động giải phóng khóa và chốt lại.`
+      );
+      this._finalizingRounds.delete(key);
+      this._finalizingSince.delete(key);
     }
 
     this._finalizingRounds.add(key);
+    this._finalizingSince.set(key, this._now());
     this._clearRoundTimers(key);
 
     try {
@@ -1980,8 +1996,10 @@ export class MultiplayerRoundSystem {
           ]
         );
         await this._renderBoardNow(key, { phase: 'LOCKED' });
-        // 🗣️ Chat "HẾT THỜI GIAN — ĐANG MỞ BÁT" lên kênh (1 lần/phiên)
-        await this.chatTimeUp(key).catch(() => {});
+        // 🗣️ Chat "HẾT THỜI GIAN — ĐANG MỞ BÁT" lên kênh (1 lần/phiên).
+        // TUYỆT ĐỐI KHÔNG await: tin nhắn chat chỉ là phụ, mạng Discord có treo thì
+        // việc sinh kết quả + công bố bảng cũng không bao giờ bị chặn.
+        void this.chatTimeUp(key).catch(() => {});
       }
 
       // BƯỚC 4–5: Sinh MỘT kết quả chung duy nhất (hoặc đọc lại nếu đã lưu trước khi crash!) và LƯU VÀO DB TRƯỚC KHI HIỂN THỊ
@@ -2354,6 +2372,7 @@ export class MultiplayerRoundSystem {
       return finalSnapshot;
     } finally {
       this._finalizingRounds.delete(key);
+      this._finalizingSince.delete(key);
       // Dọn dấu vết chống trùng thông báo đếm ngược sau khi phiên đã chốt xong (giữ RAM thấp)
       const gc = setTimeout(() => this._clearCountdownChatMarks(key), 30_000);
       gc.unref?.();
@@ -2814,12 +2833,73 @@ export class MultiplayerRoundSystem {
       const cached = this.client.channels?.cache?.get(String(channelId));
       if (cached) return cached;
       if (typeof this.client.channels?.fetch === 'function') {
-        return await this.client.channels.fetch(String(channelId)).catch(() => null);
+        // Giới hạn 2 giây: Discord API treo cũng không được giữ pipeline chốt phiên
+        let timer = null;
+        const timeout = new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), 2_000);
+        });
+        const fetched = Promise.resolve()
+          .then(() => this.client.channels.fetch(String(channelId)))
+          .catch(() => null);
+        try {
+          return await Promise.race([fetched, timeout]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
       }
     } catch {
       // Bỏ qua: không có quyền/kênh đã xóa thì bỏ nhịp chat này
     }
     return null;
+  }
+
+  /**
+   * Gửi tin nhắn kênh với **giới hạn thời gian cứng** (mặc định 2.5 giây).
+   * Discord/WebSocket có treo hay rate-limit kẹt thì hàm này luôn kết thúc,
+   * tuyệt đối không giữ chặt pipeline chốt kết quả của phiên.
+   *
+   * @param {any} channel
+   * @param {object} payload
+   * @param {number} [timeoutMs=2500]
+   * @returns {Promise<any | null>} Tin nhắn đã gửi, hoặc `null` nếu lỗi/timeout.
+   */
+  async _sendWithTimeout(channel, payload, timeoutMs = 2_500) {
+    if (!channel || typeof channel.send !== 'function') return null;
+
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    });
+
+    const send = Promise.resolve()
+      .then(() => channel.send(payload))
+      .catch((err) => {
+        logger.warn('MultiplayerRoundSystem', 'Không gửi được tin nhắn chat đếm ngược', err);
+        return null;
+      });
+
+    try {
+      return await Promise.race([send, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Tự xóa tin nhắn sau N giây (an toàn với mọi kiểu trả về, không bao giờ ném lỗi).
+   * @param {any} msg
+   * @param {number} delayMs
+   */
+  _scheduleMessageCleanup(msg, delayMs = 7_000) {
+    if (!msg || typeof msg.delete !== 'function') return;
+    const t = setTimeout(() => {
+      try {
+        Promise.resolve(msg.delete()).catch(() => {});
+      } catch {
+        // Bỏ qua: tin nhắn đã bị xóa hoặc bot mất quyền
+      }
+    }, delayMs);
+    t.unref?.();
   }
 
   /**
@@ -2886,31 +2966,22 @@ export class MultiplayerRoundSystem {
     };
     const step_ = lines[step];
 
-    try {
-      const msg = await channel.send({
-        content:
-          `${step_.emoji} ${step_.headline}\n` +
-          `-# ${gameMeta.emoji} Phiên \`#${key}\` • ${step_.hint}`,
-        allowedMentions: { parse: [] },
-      });
+    const msg = await this._sendWithTimeout(channel, {
+      content:
+        `${step_.emoji} ${step_.headline}\n` +
+        `-# ${gameMeta.emoji} Phiên \`#${key}\` • ${step_.hint}`,
+      allowedMentions: { parse: [] },
+    });
 
-      // Tự xóa sau 7 giây để kênh không bị rác sau khi phiên đã mở bát
-      const ttl = setTimeout(() => {
-        msg?.delete?.().catch(() => {});
-      }, 7_000);
-      ttl.unref?.();
-
-      return true;
-    } catch (err) {
-      logger.warn(
-        'MultiplayerRoundSystem',
-        `Không gửi được tin nhắn đếm ngược ${step}s của phiên #${key}`,
-        err
-      );
-      // Cho phép thử lại ở nhịp sau nếu gửi lỗi mạng
+    if (!msg) {
+      // Gửi lỗi/timeout: cho phép thử lại ở nhịp sau
       done.delete(step);
       return false;
     }
+
+    // Tự xóa sau 7 giây để kênh không bị rác sau khi phiên đã mở bát
+    this._scheduleMessageCleanup(msg, 7_000);
+    return true;
   }
 
   /**
@@ -2936,22 +3007,16 @@ export class MultiplayerRoundSystem {
     if (!channel || typeof channel.send !== 'function') return false;
 
     const gameMeta = this._countdownGameMeta(round.game_id);
-    try {
-      const msg = await channel.send({
-        content:
-          `⏰ **HẾT THỜI GIAN!** — Đã khóa sổ phiên \`#${key}\`\n` +
-          `-# ${gameMeta.emoji} ${gameMeta.title} • Đang mở bát công bố kết quả...`,
-        allowedMentions: { parse: [] },
-      });
-      const ttl = setTimeout(() => {
-        msg?.delete?.().catch(() => {});
-      }, 10_000);
-      ttl.unref?.();
-      return true;
-    } catch (err) {
-      logger.warn('MultiplayerRoundSystem', `Không gửi được tin nhắn hết thời gian phiên #${key}`, err);
-      return false;
-    }
+    const msg = await this._sendWithTimeout(channel, {
+      content:
+        `⏰ **HẾT THỜI GIAN!** — Đã khóa sổ phiên \`#${key}\`\n` +
+        `-# ${gameMeta.emoji} ${gameMeta.title} • Đang mở bát công bố kết quả...`,
+      allowedMentions: { parse: [] },
+    });
+
+    if (!msg) return false;
+    this._scheduleMessageCleanup(msg, 10_000);
+    return true;
   }
 
   _scheduleRoundTimers(roundId) {
@@ -3398,6 +3463,55 @@ export class MultiplayerRoundSystem {
    *    `auto_next_state = 'PENDING'`: nếu đã hết thời gian nghỉ thì mở ngay phiên tiếp theo,
    *    nếu vẫn trong thời gian nghỉ thì đặt lại bộ đếm cho phần giây còn lại.
    */
+  /**
+   * 🚑 BỘ QUÉT AN TOÀN (chạy mỗi 15 giây): tìm các phiên đã quá giờ kết thúc nhưng vẫn còn
+   * ở trạng thái BETTING/WAITING/LOCKED (do timer bị mất, bot restart, hoặc tiến trình bị treo)
+   * và tự động chốt lại — bảo đảm kết quả LUÔN được công bố, không bao giờ đứng yên.
+   *
+   * @returns {Promise<number>} Số phiên đã được xử lý.
+   */
+  async sweepStuckRounds() {
+    let handled = 0;
+    try {
+      const rows = this.db.all(
+        `SELECT round_id, status, ends_at FROM multiplayer_rounds
+         WHERE status IN (?, ?, ?) AND ends_at <= ?
+         ORDER BY ends_at ASC LIMIT 10`,
+        [MP_ROUND_STATUS.WAITING, MP_ROUND_STATUS.BETTING, MP_ROUND_STATUS.LOCKED, this._now()]
+      );
+
+      for (const row of rows) {
+        const key = String(row.round_id);
+        // Bỏ qua phiên đang trong tiến trình chốt bình thường (dưới 20 giây)
+        const since = this._finalizingSince.get(key);
+        if (since && this._now() - since < 20_000) continue;
+        handled += 1;
+        await this.finalizeRound(key, { skipAnimation: true, isRecoverySettlement: true }).catch(
+          (err) => {
+            logger.error('MultiplayerRoundSystem', `Bộ quét an toàn không chốt được phiên #${key}`, err);
+          }
+        );
+      }
+    } catch (err) {
+      logger.error('MultiplayerRoundSystem', 'Lỗi bộ quét an toàn phiên quá hạn', err);
+    }
+    return handled;
+  }
+
+  /**
+   * Khởi động bộ quét an toàn định kỳ (gọi 1 lần khi Bot sẵn sàng).
+   * @param {number} [intervalMs=15000]
+   */
+  startSafetySweeper(intervalMs = 15_000) {
+    if (this._safetySweepTimer) return this._safetySweepTimer;
+    const t = setInterval(() => {
+      void this.sweepStuckRounds();
+    }, intervalMs);
+    t.unref?.();
+    this._safetySweepTimer = t;
+    return t;
+  }
+
   async recoverActiveRounds() {
     const placeholders = MP_ACTIVE_STATUSES.map(() => '?').join(', ');
     const pendingRounds = this.db.all(
@@ -3488,5 +3602,10 @@ export class MultiplayerRoundSystem {
     this._messageRefs.clear();
     this._countdownChat.clear();
     this._timeUpChat.clear();
+    this._finalizingSince.clear();
+    if (this._safetySweepTimer) {
+      clearInterval(this._safetySweepTimer);
+      this._safetySweepTimer = null;
+    }
   }
 }

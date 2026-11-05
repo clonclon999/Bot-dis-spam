@@ -147,4 +147,133 @@ describe('Chat Đếm Ngược 3 – 2 – 1 Lên Kênh Khi Sắp Hết Giờ Đ
       await fsp.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('4. 🔥 Kênh bị treo (channel.send không bao giờ trả về) thì phiên VẪN chốt kết quả bình thường — không đứng yên', async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'countdown-freeze-'));
+    try {
+      const systems = await createBotSystems(tmpDir);
+      const mp = systems.multiplayerRoundSystem;
+      try {
+        // Kênh "chết": send treo vĩnh viễn, fetch treo vĩnh viễn (mô phỏng Discord/WebSocket kẹt)
+        mp.attachClient({
+          channels: {
+            cache: new Map([
+              [
+                'chan-freeze',
+                {
+                  id: 'chan-freeze',
+                  messages: { fetch: () => new Promise(() => {}) },
+                  send: () => new Promise(() => {}),
+                },
+              ],
+            ]),
+            fetch: () => new Promise(() => {}),
+          },
+        });
+
+        const round = await mp.startRound({
+          guildId: 'guild-freeze',
+          channelId: 'chan-freeze',
+          gameId: GAME_IDS.BAUCUA,
+          userId: 'p-freeze',
+        });
+        const roundId = round.round?.round_id || round.snapshot?.round?.round_id;
+
+        // Tin nhắn chat "HẾT THỜI GIAN" phải tự bỏ cuộc sau ~2.5s thay vì treo mãi
+        const chatStart = Date.now();
+        const sentOk = await mp.chatTimeUp(roundId);
+        assert.equal(sentOk, false, 'Gửi thất bại phải trả về false');
+        assert.ok(
+          Date.now() - chatStart < 6_000,
+          `chatTimeUp phải có giới hạn thời gian (thực tế ${Date.now() - chatStart}ms)`
+        );
+
+        // Chốt phiên: kết quả + trạng thái PHẢI hoàn tất dù kênh treo
+        const t0 = Date.now();
+        await mp.finalizeRound(roundId, { skipAnimation: true });
+        const elapsed = Date.now() - t0;
+
+        const row = systems.db.get(
+          'SELECT status, result_json FROM multiplayer_rounds WHERE round_id = ?',
+          [roundId]
+        );
+        assert.equal(row.status, 'COMPLETED', 'Phiên phải được công bố kết quả, không kẹt ở LOCKED');
+        assert.ok(row.result_json, 'Kết quả chung phải được sinh và lưu vào DB');
+        assert.ok(elapsed < 15_000, `Chốt phiên không được treo (thực tế ${elapsed}ms)`);
+      } finally {
+        mp.shutdown();
+        await systems.db.close();
+      }
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('5. Khóa chốt phiên bị kẹt quá 20 giây sẽ tự giải phóng để chốt lại (self-heal)', async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'countdown-heal-'));
+    try {
+      const systems = await createBotSystems(tmpDir);
+      const mp = systems.multiplayerRoundSystem;
+      try {
+        const round = await mp.startRound({
+          guildId: 'guild-heal',
+          channelId: 'chan-heal',
+          gameId: GAME_IDS.TAIXIU,
+          userId: 'p-heal',
+        });
+        const roundId = round.round?.round_id || round.snapshot?.round?.round_id;
+
+        // Giả lập một lần chốt trước đó bị treo từ 30 giây trước
+        mp._finalizingRounds.add(String(roundId));
+        mp._finalizingSince.set(String(roundId), Date.now() - 30_000);
+
+        await mp.finalizeRound(roundId, { skipAnimation: true });
+
+        const row = systems.db.get('SELECT status FROM multiplayer_rounds WHERE round_id = ?', [roundId]);
+        assert.equal(row.status, 'COMPLETED', 'Phải tự chữa lành và chốt xong phiên bị kẹt');
+        assert.equal(mp._finalizingRounds.has(String(roundId)), false, 'Phải giải phóng khóa sau khi xong');
+      } finally {
+        mp.shutdown();
+        await systems.db.close();
+      }
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('6. Bộ quét an toàn tự chốt lại phiên bị kẹt (mất timer / restart) — kết quả luôn được công bố', async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'countdown-sweep-'));
+    try {
+      const systems = await createBotSystems(tmpDir);
+      const mp = systems.multiplayerRoundSystem;
+      try {
+        const round = await mp.startRound({
+          guildId: 'guild-sweep',
+          channelId: 'chan-sweep',
+          gameId: GAME_IDS.BAUCUA,
+          userId: 'p-sweep',
+        });
+        const roundId = round.round?.round_id || round.snapshot?.round?.round_id;
+
+        // Mô phỏng timer bị mất & phiên đã quá giờ từ 5 giây trước
+        mp._clearRoundTimers(roundId);
+        systems.db.run('UPDATE multiplayer_rounds SET ends_at = ? WHERE round_id = ?', [
+          Date.now() - 5_000,
+          roundId,
+        ]);
+
+        const handled = await mp.sweepStuckRounds();
+        assert.equal(handled >= 1, true, 'Bộ quét phải phát hiện phiên quá hạn');
+
+        const row = systems.db.get('SELECT status, result_json FROM multiplayer_rounds WHERE round_id = ?', [roundId]);
+        assert.equal(row.status, 'COMPLETED', 'Phiên bị kẹt phải được chốt và công bố kết quả');
+        assert.ok(row.result_json);
+      } finally {
+        mp.shutdown();
+        await systems.db.close();
+      }
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

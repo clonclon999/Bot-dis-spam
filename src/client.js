@@ -65,6 +65,12 @@ export function createBotClient({ env, systems, ...legacyDeps }) {
     } catch (err) {
       logger.error('MultiplayerRecovery', 'Lỗi khôi phục phiên cược chung sau khởi động', err);
     }
+    // 🚑 Bộ quét an toàn: mỗi 15 giây tự chốt lại các phiên quá hạn bị kẹt (mất timer/restart/treo mạng)
+    try {
+      activeContext?.multiplayerRoundSystem?.startSafetySweeper?.(15_000);
+    } catch (err) {
+      logger.warn('MultiplayerRecovery', 'Không khởi động được bộ quét an toàn phiên quá hạn', err);
+    }
   });
 
   client.on(Events.MessageCreate, (message) =>
