@@ -34,6 +34,7 @@ import {
   verifyPanelOwner,
 } from '../../ui/interactionHelpers.js';
 import { renderAttemptHearts, renderNeonBar, THEME } from '../../ui/theme.js';
+import { DEFAULT_RESULT_TTL_MS, globalPanelCleaner } from '../../utils/panelCleaner.js';
 import {
   ASSET_PATHS,
   buildAssetAttachment,
@@ -2058,6 +2059,7 @@ export async function handleGameComponentInteraction(interaction, ctx) {
           clearAttachments: true,
         })
       );
+      globalPanelCleaner.scheduleAutoDelete(interaction.message, DEFAULT_RESULT_TTL_MS);
       return true;
     }
 
@@ -2085,6 +2087,7 @@ export async function handleGameComponentInteraction(interaction, ctx) {
           clearAttachments: true,
         })
       );
+      globalPanelCleaner.scheduleAutoDelete(interaction.message, DEFAULT_RESULT_TTL_MS);
       return true;
     }
 
@@ -2120,7 +2123,7 @@ export async function handleGameComponentInteraction(interaction, ctx) {
     });
 
     const duelGallery = buildRpsDuelGalleryAssets(res.move1, res.move2, ch.p1Name, interaction.user.username);
-    const badge = buildAssetAttachment(ASSET_PATHS.RPS_WIN, 'pvp_result.png');
+    const badge = buildAssetAttachment(ASSET_PATHS.RPS_ICON, 'pvp_result.png');
 
     const finalPvp = buildCv2Payload({
       containers: [
@@ -2155,6 +2158,7 @@ export async function handleGameComponentInteraction(interaction, ctx) {
       stages: [{ payload: cdStage, delayMs: 850 }],
       finalPayload: finalPvp,
     });
+    globalPanelCleaner.scheduleAutoDelete(interaction.message, DEFAULT_RESULT_TTL_MS);
     return true;
   }
 

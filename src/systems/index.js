@@ -142,6 +142,13 @@ export async function createBotSystems(dataDir) {
       if (sentMsg) {
         multiplayerRoundSystem.registerMessageRef(newSnapshot.round.round_id, sentMsg);
       }
+      // Tự động xóa bảng kết quả của phiên trước ngay khi bảng phiên mới đã đăng (không làm rối mắt kênh!)
+      if (prevMsg && prevMsg !== sentMsg && typeof prevMsg.delete === 'function') {
+        await prevMsg.delete().catch(() => {});
+      }
+      if (prevRound?.round_id) {
+        multiplayerRoundSystem.clearMessageRef(prevRound.round_id);
+      }
       return;
     }
 
@@ -152,6 +159,9 @@ export async function createBotSystems(dataDir) {
         isEdit: true,
       });
       await prevMsg.edit(editPayload);
+      if (prevRound?.round_id) {
+        multiplayerRoundSystem.clearMessageRef(prevRound.round_id);
+      }
       multiplayerRoundSystem.registerMessageRef(newSnapshot.round.round_id, prevMsg);
       return;
     }
@@ -163,6 +173,12 @@ export async function createBotSystems(dataDir) {
       const sentMsg = await targetChannel.send(freshPayload);
       if (sentMsg) {
         multiplayerRoundSystem.registerMessageRef(newSnapshot.round.round_id, sentMsg);
+      }
+      if (prevMsg && prevMsg !== sentMsg && typeof prevMsg.delete === 'function') {
+        await prevMsg.delete().catch(() => {});
+      }
+      if (prevRound?.round_id) {
+        multiplayerRoundSystem.clearMessageRef(prevRound.round_id);
       }
     }
   });

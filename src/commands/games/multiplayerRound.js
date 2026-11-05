@@ -47,13 +47,13 @@ const MP_GAME_META = Object.freeze({
   [GAME_IDS.BAUCUA]: Object.freeze({
     id: GAME_IDS.BAUCUA,
     title: 'BẦU CUA TÔM CÁ 3D',
-    shortName: 'Bầu Cua 3D',
+    shortName: 'Bầu Cua',
     emoji: '🦀',
-    bannerPath: ASSET_PATHS.BAUCUA_BANNER_3D,
+    bannerPath: ASSET_PATHS.BAUCUA_GRID,
     animPath: ASSET_PATHS.BAUCUA_SHAKE_GIF,
     animName: 'mp_baucua_shake.gif',
     compactRules:
-      '📖 **Luật chuẩn Bầu Cua:** Chọn **1 hoặc nhiều cửa** (`Bầu, Cua, Tôm, Cá, Gà, Nai`). Lắc **3 viên xúc xắc chung** toàn phiên: Xuất hiện **1 lần = nhận 2x** hoàn trả • **2 lần = nhận 3x** • **3 lần = nhận 4x** • **0 lần = mất tiền cược**.',
+      '📖 **Luật chuẩn Bầu Cua:** Ấn trực tiếp nút linh vật bên trên để nhập tiền cược. Lắc **3 xúc xắc chung**: Trùng **1 mặt = 2x** • **2 mặt = 3x** • **3 mặt = 4x**.',
   }),
   [GAME_IDS.TAIXIU]: Object.freeze({
     id: GAME_IDS.TAIXIU,
@@ -79,10 +79,26 @@ const MP_GAME_META = Object.freeze({
   }),
 });
 
+/**
+ * Thứ tự chuẩn 3x2 trên bàn Bầu Cua Tôm Cá truyền thống:
+ * Hàng 1: Nai • Bầu • Gà
+ * Hàng 2: Cá  • Cua • Tôm
+ */
+const BAUCUA_BOARD_GRID_ORDER = Object.freeze([
+  Object.freeze({ id: 'nai', name: 'Nai', emoji: '🦌' }),
+  Object.freeze({ id: 'bau', name: 'Bầu', emoji: '🏺' }),
+  Object.freeze({ id: 'ga', name: 'Gà', emoji: '🐓' }),
+  Object.freeze({ id: 'ca', name: 'Cá', emoji: '🐟' }),
+  Object.freeze({ id: 'cua', name: 'Cua', emoji: '🦀' }),
+  Object.freeze({ id: 'tom', name: 'Tôm', emoji: '🦐' }),
+]);
+
 export function formatChoiceLabel(gameId, choice) {
   if (gameId === GAME_IDS.BAUCUA) {
+    const g = BAUCUA_BOARD_GRID_ORDER.find((x) => x.id === choice);
+    if (g) return `${g.emoji} ${g.name.toUpperCase()}`;
     const m = BAUCUA_MASCOT_MAP[choice];
-    return m ? `${m.emoji} ${m.name}` : String(choice).toUpperCase();
+    return m ? `${m.emoji} ${m.name.toUpperCase()}` : String(choice).toUpperCase();
   }
   if (gameId === GAME_IDS.TAIXIU) {
     return choice === 'tai' ? '🔴 CỬA TÀI (11–17)' : '🔵 CỬA XỈU (4–10)';
@@ -96,10 +112,19 @@ export function formatChoiceLabel(gameId, choice) {
 
 function buildDoorSummaryLines(gameId, doorStats) {
   if (gameId === GAME_IDS.BAUCUA) {
-    return BAUCUA_MASCOTS.map((m) => {
-      const st = doorStats[m.id] || { count: 0, total: 0 };
-      return `• ${m.emoji} **${m.name}:** \`${st.count} người\` — **${formatVnd(st.total)}**`;
-    }).join('\n');
+    const row1 = BAUCUA_BOARD_GRID_ORDER.slice(0, 3)
+      .map((m) => {
+        const st = doorStats[m.id] || { count: 0, total: 0 };
+        return `${m.emoji} **${m.name}:** **${formatVnd(st.total)}** *(${st.count})*`;
+      })
+      .join('  │  ');
+    const row2 = BAUCUA_BOARD_GRID_ORDER.slice(3, 6)
+      .map((m) => {
+        const st = doorStats[m.id] || { count: 0, total: 0 };
+        return `${m.emoji} **${m.name}:** **${formatVnd(st.total)}** *(${st.count})*`;
+      })
+      .join('  │  ');
+    return `${row1}\n${row2}`;
   }
   if (gameId === GAME_IDS.TAIXIU) {
     const tai = doorStats.tai || { count: 0, total: 0 };
@@ -119,12 +144,12 @@ function buildDoorActionRows(roundId, gameId, disabled = false) {
   if (gameId === GAME_IDS.BAUCUA) {
     const row1 = new ActionRowBuilder();
     const row2 = new ActionRowBuilder();
-    BAUCUA_MASCOTS.forEach((m, idx) => {
+    BAUCUA_BOARD_GRID_ORDER.forEach((m, idx) => {
       const btn = new ButtonBuilder()
         .setCustomId(`mp:door:${roundId}:${m.id}`)
         .setEmoji(m.emoji)
-        .setLabel(`Cửa ${m.name}`)
-        .setStyle(ButtonStyle.Secondary)
+        .setLabel(m.name)
+        .setStyle(ButtonStyle.Primary)
         .setDisabled(disabled);
       if (idx < 3) row1.addComponents(btn);
       else row2.addComponents(btn);
@@ -138,13 +163,13 @@ function buildDoorActionRows(roundId, gameId, disabled = false) {
         new ButtonBuilder()
           .setCustomId(`mp:door:${roundId}:tai`)
           .setEmoji('🔴')
-          .setLabel('ĐẶT CỬA TÀI (11–17)')
+          .setLabel('Tài (11–17)')
           .setStyle(ButtonStyle.Danger)
           .setDisabled(disabled),
         new ButtonBuilder()
           .setCustomId(`mp:door:${roundId}:xiu`)
           .setEmoji('🔵')
-          .setLabel('ĐẶT CỬA XỈU (4–10)')
+          .setLabel('Xỉu (4–10)')
           .setStyle(ButtonStyle.Primary)
           .setDisabled(disabled)
       ),
@@ -158,7 +183,7 @@ function buildDoorActionRows(roundId, gameId, disabled = false) {
           .setCustomId(`mp:door:${roundId}:${a.id}`)
           .setEmoji(a.emoji)
           .setLabel(a.name.split(' ').slice(0, 2).join(' '))
-          .setStyle(ButtonStyle.Secondary)
+          .setStyle(ButtonStyle.Primary)
           .setDisabled(disabled)
       )
     ),
@@ -296,56 +321,59 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
         '⏰ **THÔNG BÁO 30 GIÂY:** Còn nửa chặng cuối — Nhanh tay chọn cửa may mắn!';
     }
 
-    const bannerAtt = buildAssetAttachment(gameMeta.bannerPath, `mp_banner_${round.game_id}.png`);
-    const doorsGallery =
-      round.game_id === GAME_IDS.BAUCUA
-        ? buildMultiplayerBauCuaDoorsGallery(doorStats)
-        : round.game_id === GAME_IDS.TAIXIU
-          ? buildMultiplayerTaiXiuDoorsGallery(doorStats)
-          : buildMultiplayerRaceDoorsGallery(doorStats);
+    const isBauCua = round.game_id === GAME_IDS.BAUCUA;
+    if (isBauCua && accent === THEME.NEON_CYAN) {
+      accent = THEME.NEON_GOLD;
+    }
 
-    // Container 1: (1) Banner -> (2) Tên phiên & Round ID -> (3) Người khởi tạo -> (4) Đồng hồ -> (5) Trạng thái -> (6) Hình cửa cược -> (7) Tổng người chơi -> (8) Tổng tiền cược
-    const topContainer = createContainer({
+    const bannerAtt = buildAssetAttachment(gameMeta.bannerPath, `mp_banner_${round.game_id}.png`);
+    const doorsGallery = isBauCua
+      ? { files: [], items: [] }
+      : round.game_id === GAME_IDS.TAIXIU
+        ? buildMultiplayerTaiXiuDoorsGallery(doorStats)
+        : buildMultiplayerRaceDoorsGallery(doorStats);
+
+    const boardChildren = [
+      mediaGallery([{ url: bannerAtt.url, description: gameMeta.title }]),
+      textDisplay(
+        [
+          `## ${gameMeta.emoji} PHIÊN ${gameMeta.title} — \`#${round.round_id}\``,
+          `👤 **Người khởi tạo phiên:** ${formatStarterDisplay(round)}${round.prev_round_id ? `  •  ⏮️ **Phiên trước:** \`#${round.prev_round_id}\`` : ''}`,
+          `⏱️ **ĐỒNG HỒ ĐẾM NGƯỢC:** **<t:${endsUnix}:R>** *(Khóa sổ lúc <t:${endsUnix}:T> • ${round.duration_sec}s)*`,
+          countdownHeadline,
+        ].join('\n')
+      ),
+      separator({ divider: true }),
+    ];
+
+    if (doorsGallery.items.length > 0) {
+      boardChildren.push(mediaGallery(doorsGallery.items));
+    }
+
+    boardChildren.push(
+      textDisplay(
+        [
+          `👥 **Tham gia:** **${round.total_players} người**  •  💰 **Tổng tiền cược:** **${formatVnd(round.total_bet_vnd)}**`,
+          buildDoorSummaryLines(round.game_id, doorStats),
+        ].join('\n')
+      )
+    );
+
+    const boardContainer = createContainer({
       accentColor: accent,
-      children: [
-        mediaGallery([{ url: bannerAtt.url, description: gameMeta.title }]),
-        textDisplay(
-          [
-            `## ${gameMeta.emoji} PHIÊN ${gameMeta.title} — \`#${round.round_id}\``,
-            `👤 **Người khởi tạo phiên:** ${formatStarterDisplay(round)}${round.prev_round_id ? `  •  ⏮️ **Phiên trước:** \`#${round.prev_round_id}\`` : ''}`,
-            `⏱️ **ĐỒNG HỒ ĐẾM NGƯỢC:** **<t:${endsUnix}:R>** *(Khóa sổ lúc <t:${endsUnix}:T> • Tổng ${round.duration_sec}s)*`,
-            countdownHeadline,
-          ].join('\n')
-        ),
-        separator({ divider: true }),
-        mediaGallery(doorsGallery.items),
-        textDisplay(
-          [
-            `👥 **Tổng số người tham gia:** **${round.total_players} người**  •  💰 **Tổng tiền cược:** **${formatVnd(round.total_bet_vnd)}**`,
-            `📊 **Tình hình đặt cược trực tiếp trên các cửa:**`,
-            buildDoorSummaryLines(round.game_id, doorStats),
-          ].join('\n')
-        ),
-      ],
+      children: boardChildren,
     });
 
-    // Container 2: (9) Nút chọn cửa -> Phỉnh nhanh -> (10) Nút đặt cược & quản lý cá nhân -> (11) Hướng dẫn luật chơi
     const controlContainer = createContainer({
-      accentColor: THEME.NEON_PURPLE,
+      accentColor: isBauCua ? THEME.NEON_GOLD : THEME.NEON_PURPLE,
       children: [
         ...buildDoorActionRows(round.round_id, round.game_id, false),
-        buildQuickChipSelectRow(round.round_id, false),
         new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`mp:bet_open:${round.round_id}`)
-            .setEmoji('💰')
-            .setLabel('Đặt Cược (Nhập Tiền)')
-            .setStyle(ButtonStyle.Success),
           new ButtonBuilder()
             .setCustomId(`mp:my_bets:${round.round_id}`)
             .setEmoji('🧾')
             .setLabel('Cược Của Tôi')
-            .setStyle(ButtonStyle.Primary),
+            .setStyle(ButtonStyle.Secondary),
           new ButtonBuilder()
             .setCustomId(`mp:manage:${round.round_id}`)
             .setEmoji('✏️')
@@ -354,21 +382,17 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
           new ButtonBuilder()
             .setCustomId(`mp:rules:${round.game_id}`)
             .setEmoji('📖')
-            .setLabel('Chi Tiết Luật')
+            .setLabel('Luật Chơi')
             .setStyle(ButtonStyle.Secondary)
         ),
-        separator({ divider: false }),
         textDisplay(
-          [
-            gameMeta.compactRules,
-            `-# 💵 Giới hạn cược: ${formatVnd(minBet)} – ${formatVnd(maxBet)} • Chạm trực tiếp vào cửa bên trên để đặt cược nhanh!`,
-          ].join('\n')
+          `-# 💵 Cược: ${formatVnd(minBet)} – ${formatVnd(maxBet)} • Ấn trực tiếp vào nút cửa bên trên để hiện bảng nhập tiền cược!`
         ),
       ],
     });
 
     return buildCv2Payload({
-      containers: [topContainer, controlContainer],
+      containers: [boardContainer, controlContainer],
       files: [bannerAtt.attachment, ...doorsGallery.files],
       ephemeral,
       clearAttachments,
@@ -564,16 +588,22 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
         ? losersLines.join('\n')
         : '_Không có người chơi thua ở phiên này!_';
 
-  const resChildren = [
-    mediaGallery([{ url: topBannerAtt.url, description: `Kết quả phiên #${round.round_id}` }]),
+  const showTopBanner = round.game_id !== GAME_IDS.BAUCUA;
+  const resChildren = [];
+  if (showTopBanner) {
+    resChildren.push(
+      mediaGallery([{ url: topBannerAtt.url, description: `Kết quả phiên #${round.round_id}` }])
+    );
+  }
+  resChildren.push(
     textDisplay(
       [
         `## 🏆 KẾT QUẢ PHIÊN ${gameMeta.title} — \`#${round.round_id}\``,
         `👤 **Người mở phiên:** ${formatStarterDisplay(round)}  •  🕒 **Kết thúc:** <t:${completedUnix}:F> (<t:${completedUnix}:R>)`,
         resultHeadline,
       ].join('\n')
-    ),
-  ];
+    )
+  );
 
   if (rollGallery.items.length > 0) {
     resChildren.push(mediaGallery(rollGallery.items));
@@ -640,7 +670,7 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
 
   return buildCv2Payload({
     containers: [resContainer],
-    files: [topBannerAtt.attachment, ...rollGallery.files],
+    files: [...(showTopBanner ? [topBannerAtt.attachment] : []), ...rollGallery.files],
     ephemeral,
     clearAttachments,
     allowedMentions: { parse: [] },
@@ -956,6 +986,12 @@ export async function handlePublicStartRoundInteraction(
     if (sentMsg) {
       systems.multiplayerRoundSystem.registerMessageRef(startRes.round.round_id, sentMsg);
     }
+    await systems.multiplayerRoundSystem.cleanupPreviousRoundBoards?.(
+      guildId,
+      gameId,
+      startRes.round.round_id,
+      interaction.message
+    );
     if (autoBetResult && !autoBetResult.ok && typeof interaction.followUp === 'function') {
       await interaction
         .followUp(
@@ -983,6 +1019,12 @@ export async function handlePublicStartRoundInteraction(
   if (targetChannel && typeof targetChannel.send === 'function') {
     const sentMsg = await targetChannel.send(boardPayload);
     systems.multiplayerRoundSystem.registerMessageRef(startRes.round.round_id, sentMsg);
+    await systems.multiplayerRoundSystem.cleanupPreviousRoundBoards?.(
+      guildId,
+      gameId,
+      startRes.round.round_id,
+      interaction.message
+    );
 
     await safeReplyV2(
       interaction,
@@ -1678,7 +1720,7 @@ export async function handleMultiplayerComponent(interaction, systems) {
     return true;
   }
 
-  // 4. BẤM VÀO CỬA ĐẶT CƯỢC (`mp:door:<roundId>:<choice>`)
+  // 4. BẤM VÀO CỬA ĐẶT CƯỢC (`mp:door:<roundId>:<choice>`) -> LUÔN MỞ BẢNG NHẬP TIỀN CƯỢC (MODAL)
   if (action === 'door') {
     const roundId = parts[2];
     const choice = parts[3];
@@ -1700,56 +1742,11 @@ export async function handleMultiplayerComponent(interaction, systems) {
       return true;
     }
 
-    const chipPref = systems.multiplayerRoundSystem.getUserChipPreference(interaction.user.id);
-    if (chipPref !== 'modal') {
-      const profile = systems.economySystem.ensureUser(
-        interaction.user.id,
-        interaction.user.username
-      );
-      const { maxBet } = systems.multiplayerRoundSystem.getBetLimits();
-      const existingTotal = systems.multiplayerRoundSystem
-        .getUserRoundBets(roundId, interaction.user.id)
-        .filter((b) => b.status === 'ACTIVE')
-        .reduce((s, b) => s + (Number(b.amount) || 0), 0);
-
-      const quickAmt =
-        chipPref === 'all'
-          ? Math.max(0, Math.min(profile.wallet, maxBet - existingTotal))
-          : Number(chipPref);
-
-      const betRes = await systems.multiplayerRoundSystem.placeBet({
-        roundId,
-        userId: interaction.user.id,
-        username: interaction.user.username,
-        choice,
-        amount: quickAmt,
-      });
-
-      if (!betRes.ok) {
-        await safeReplyV2(
-          interaction,
-          buildCv2NoticePayload({
-            title: '⚠️ Không Thể Đặt Cược',
-            body: betRes.error,
-            accentColor: THEME.CRIMSON_NEON,
-            ephemeral: true,
-          })
-        );
-        return true;
-      }
-
-      await safeReplyV2(
-        interaction,
-        buildUserRoundReceiptPayload(
-          betRes.snapshot,
-          interaction.user.id,
-          systems,
-          `✅ Đã đặt **${formatVnd(betRes.addedAmount)}** vào **${formatChoiceLabel(betRes.gameId, choice)}**! (Mã vé: \`#${betRes.betId}\`)`,
-          { ephemeral: true }
-        )
-      );
-      return true;
-    }
+    const profile = systems.economySystem.ensureUser(
+      interaction.user.id,
+      interaction.user.username
+    );
+    const { minBet } = systems.multiplayerRoundSystem.getBetLimits();
 
     const modal = new ModalBuilder()
       .setCustomId(`mp_modal:bet:${roundId}:${choice}`)
@@ -1757,9 +1754,11 @@ export async function handleMultiplayerComponent(interaction, systems) {
 
     const amountInput = new TextInputBuilder()
       .setCustomId('amount')
-      .setLabel('Số tiền cược VNĐ (VD: 10000, 50k, 1m, all)')
+      .setLabel('Nhập tiền cược VNĐ (VD: 10000, 50k, 1m, all)')
       .setStyle(TextInputStyle.Short)
-      .setPlaceholder('Nhập số tiền VNĐ muốn đặt...')
+      .setPlaceholder(
+        `Ví: ${formatVnd(profile.wallet)} • Tối thiểu ${formatVnd(minBet)}`.slice(0, 100)
+      )
       .setRequired(true)
       .setMaxLength(20);
 

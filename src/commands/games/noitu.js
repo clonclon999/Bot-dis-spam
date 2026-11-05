@@ -17,6 +17,7 @@ import { safeReplyV2, safeUpdateV2 } from '../../ui/interactionHelpers.js';
 import { renderNeonBar, resolveUserAvatarUrl, THEME } from '../../ui/theme.js';
 import { ASSET_PATHS, buildAssetAttachment } from '../../utils/assetRegistry.js';
 import { formatVnd } from '../../utils/format.js';
+import { DEFAULT_RESULT_TTL_MS, globalPanelCleaner } from '../../utils/panelCleaner.js';
 
 export function capitalizeVi(text) {
   const s = String(text ?? '').trim();
@@ -785,12 +786,16 @@ export function registerNoituUiHooks(wordChainSystem) {
 
       if (room.boardMessage && typeof room.boardMessage.edit === 'function') {
         await editNoituBoardMessage(room.boardMessage, victoryPayload);
+        globalPanelCleaner.scheduleAutoDelete(room.boardMessage, DEFAULT_RESULT_TTL_MS);
         return;
       }
 
       const channel = room.channelRef ?? null;
       if (channel && typeof channel.send === 'function') {
-        await channel.send(victoryPayload).catch(() => {});
+        const sent = await channel.send(victoryPayload).catch(() => null);
+        if (sent) {
+          globalPanelCleaner.scheduleAutoDelete(sent, DEFAULT_RESULT_TTL_MS);
+        }
       }
     },
   });
@@ -895,6 +900,7 @@ export async function handleNoituInteraction(interaction, ctxOrDeps) {
         clearAttachments: true,
       })
     );
+    globalPanelCleaner.scheduleAutoDelete(interaction.message, DEFAULT_RESULT_TTL_MS);
     return true;
   }
 
@@ -928,6 +934,7 @@ export async function handleNoituInteraction(interaction, ctxOrDeps) {
     }
     await cleanupRoomFeedbackMessage(room);
     await safeUpdateV2(interaction, buildVictoryPayload(outcome));
+    globalPanelCleaner.scheduleAutoDelete(interaction.message, DEFAULT_RESULT_TTL_MS);
     return true;
   }
 

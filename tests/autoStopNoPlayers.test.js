@@ -3,8 +3,12 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { ButtonStyle } from 'discord.js';
 import { COMMAND_MAP } from '../src/commands/index.js';
-import { buildMultiplayerBoardPayload } from '../src/commands/games/multiplayerRound.js';
+import {
+  buildMultiplayerBoardPayload,
+  handleMultiplayerComponent,
+} from '../src/commands/games/multiplayerRound.js';
 import {
   GAME_IDS,
   HARDCODED_OWNER_ID,
@@ -15,6 +19,7 @@ import { EconomySystem } from '../src/systems/economySystem.js';
 import { createBotSystems } from '../src/systems/index.js';
 import { MultiplayerRoundSystem } from '../src/systems/multiplayerRoundSystem.js';
 import { extractCv2Text, validateCv2Payload } from '../src/ui/componentsV2.js';
+import { PanelCleaner } from '../src/utils/panelCleaner.js';
 
 async function closeTestSystems(systems) {
   systems.multiplayerRoundSystem.shutdown();
@@ -606,6 +611,139 @@ describe('UPDATE PRO MAX – AUTO STOP WHEN NO PLAYERS (All 7 Mandatory Scenario
         });
         assert.equal(validateCv2Payload(p0).valid, true);
         assert.match(extractCv2Text(p0), /3 ➔ 2 ➔ 1 ➔ HẾT THỜI GIAN!/);
+      } finally {
+        await closeTestSystems(systems);
+      }
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('9. Bàn Bầu Cua truyền thống 3x2 (Nai•Bầu•Gà / Cá•Cua•Tôm) + 6 nút Blurple mở thẳng Modal nhập tiền + Tự xóa phiên cũ & tự xóa bảng phụ sau vài phút', async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autostop-t9-'));
+    try {
+      const systems = await createBotSystems(tmpDir);
+      try {
+        systems.db.setGameChannel('g-ui', GAME_IDS.BAUCUA, 'chan-bc-ui');
+        systems.economySystem.ensureUser('u-modal-1', 'ModalTester');
+
+        // 1. Kiểm tra kích thước ảnh bàn Bầu Cua truyền thống 3x2 (1080x720) & Kéo-Búa-Bao (360x360)
+        const boardBuf = await fsp.readFile(path.resolve('assets/baucua/board_grid.png'));
+        assert.equal(boardBuf.readUInt32BE(16), 1080);
+        assert.equal(boardBuf.readUInt32BE(20), 720);
+        const rpsBuf = await fsp.readFile(path.resolve('assets/rps/paper.png'));
+        assert.equal(rpsBuf.readUInt32BE(16), 360);
+        assert.equal(rpsBuf.readUInt32BE(20), 360);
+
+        // 2. Mở phiên 1 -> Kiểm tra chỉ đính kèm 1 ảnh bàn Bầu Cua truyền thống & đúng 2 hàng nút Blurple [Nai, Bầu, Gà] / [Cá, Cua, Tôm]
+        let r1Deleted = false;
+        let r1Msg = null;
+        await COMMAND_MAP.get('baucua').execute(
+          {
+            guildId: 'g-ui',
+            channelId: 'chan-bc-ui',
+            channel: { id: 'chan-bc-ui', parentId: null },
+            user: { id: 'u-modal-1', username: 'ModalTester' },
+            replied: false,
+            deferred: false,
+            options: {
+              getString: () => null,
+              getInteger: () => null,
+            },
+            reply: async (payload) => {
+              assert.equal(payload.files.length, 1, 'Bàn Bầu Cua gọn nhẹ chỉ đính kèm đúng 1 ảnh bàn truyền thống 3x2');
+              const ctrlJson = payload.components[1].toJSON();
+              const row1Labels = ctrlJson.components[0].components.map((b) => b.label);
+              const row2Labels = ctrlJson.components[1].components.map((b) => b.label);
+              assert.deepEqual(row1Labels, ['Nai', 'Bầu', 'Gà']);
+              assert.deepEqual(row2Labels, ['Cá', 'Cua', 'Tôm']);
+              for (const b of [...ctrlJson.components[0].components, ...ctrlJson.components[1].components]) {
+                assert.equal(b.style, ButtonStyle.Primary, 'Tất cả 6 nút linh vật phải mang màu xanh Blurple');
+              }
+              r1Msg = {
+                id: 'msg-r1-live',
+                edit: async () => {},
+                delete: async () => {
+                  r1Deleted = true;
+                },
+              };
+              return { resource: { message: r1Msg } };
+            },
+          },
+          systems
+        );
+
+        const activeRound = systems.multiplayerRoundSystem.getActiveRounds('g-ui', GAME_IDS.BAUCUA)[0];
+        assert.ok(activeRound);
+
+        // 3. Bấm vào nút cửa bất kỳ -> LUÔN hiện Modal nhập tiền cược (kể cả khi trước đó có chipPref cũ)
+        systems.multiplayerRoundSystem.setUserChipPreference('u-modal-1', 50_000);
+        let openedModalJson = null;
+        await handleMultiplayerComponent(
+          {
+            customId: `mp:door:${activeRound.round_id}:nai`,
+            user: { id: 'u-modal-1', username: 'ModalTester' },
+            showModal: async (modal) => {
+              openedModalJson = modal.toJSON();
+            },
+          },
+          systems
+        );
+        assert.ok(openedModalJson, 'Ấn nút cửa phải hiện ngay bảng nhập tiền cược Modal');
+        assert.equal(openedModalJson.custom_id, `mp_modal:bet:${activeRound.round_id}:nai`);
+
+        // 4. Đặt cược & tất toán Phiên 1 -> Khi chuyển sang Phiên 2, bảng Phiên 1 tự động bị xóa!
+        await systems.multiplayerRoundSystem.placeBet({
+          roundId: activeRound.round_id,
+          userId: 'u-modal-1',
+          username: 'ModalTester',
+          choice: 'nai',
+          amount: 10_000,
+        });
+
+        let r2Sent = false;
+        systems.multiplayerRoundSystem.attachClient({
+          channels: {
+            cache: new Map([
+              [
+                'chan-bc-ui',
+                {
+                  id: 'chan-bc-ui',
+                  messages: { fetch: async (id) => (id === 'msg-r1-live' ? r1Msg : null) },
+                  send: async () => {
+                    r2Sent = true;
+                    return { id: 'msg-r2-live', edit: async () => {}, delete: async () => {} };
+                  },
+                },
+              ],
+            ]),
+          },
+        });
+
+        await systems.multiplayerRoundSystem.finalizeRound(activeRound.round_id, { skipAnimation: true });
+        await systems.multiplayerRoundSystem.triggerAutoNextRound(activeRound.round_id);
+        assert.equal(r2Sent, true, 'Phiên 2 đã được đăng');
+        assert.equal(r1Deleted, true, 'Bảng kết quả Phiên 1 tự động biến mất khi sang Phiên 2');
+
+        // 5. Các bảng phụ trợ / kết quả mini-game tự động biến mất sau TTL
+        const cleaner = new PanelCleaner({ panelTtlMs: 40, resultTtlMs: 30 });
+        let auxDeleted = false;
+        const auxMsg = {
+          id: 'msg-aux-gc',
+          delete: async () => {
+            auxDeleted = true;
+          },
+        };
+        await cleaner.registerUserPanel({
+          channelId: 'chan-bc-ui',
+          userId: 'u-modal-1',
+          commandName: 'games',
+          message: auxMsg,
+        });
+        assert.equal(auxDeleted, false);
+        await new Promise((r) => setTimeout(r, 70));
+        assert.equal(auxDeleted, true, 'Bảng phụ trợ tự động biến mất sau thời gian chờ');
+        cleaner.clearAllTimers();
       } finally {
         await closeTestSystems(systems);
       }

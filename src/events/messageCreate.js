@@ -9,6 +9,7 @@ import { GAME_IDS } from '../config/constants.js';
 import { evaluateExemption } from '../services/whitelistService.js';
 import { ConcurrencyGuard } from '../utils/locks.js';
 import { logger } from '../utils/logger.js';
+import { DEFAULT_RESULT_TTL_MS, globalPanelCleaner } from '../utils/panelCleaner.js';
 
 /** Bộ đệm thời gian nhận EXP trò chuyện để tránh ghi SQLite liên tục khi chat nhanh */
 const chatExpCooldowns = new Map();
@@ -143,11 +144,17 @@ async function renderNoituProTurn(message, turnResult, wordChainSystem) {
 
     if (room?.boardMessage && typeof room.boardMessage.edit === 'function') {
       const edited = await editNoituBoardMessage(room.boardMessage, victoryPayload);
-      if (edited) return;
+      if (edited) {
+        globalPanelCleaner.scheduleAutoDelete(room.boardMessage, DEFAULT_RESULT_TTL_MS);
+        return;
+      }
     }
 
     if (typeof channel?.send === 'function') {
-      await channel.send(victoryPayload).catch(() => {});
+      const sent = await channel.send(victoryPayload).catch(() => null);
+      if (sent) {
+        globalPanelCleaner.scheduleAutoDelete(sent, DEFAULT_RESULT_TTL_MS);
+      }
     }
     return;
   }

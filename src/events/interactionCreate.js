@@ -188,6 +188,9 @@ export async function handleInteractionCreate(interaction, context) {
       }
       return;
     }
+    if (interaction.message) {
+      globalPanelCleaner.touchMessage(interaction.message);
+    }
     await routeComponentInteraction(interaction, context);
   });
 

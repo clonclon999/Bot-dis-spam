@@ -140,6 +140,73 @@ export class MultiplayerRoundSystem {
     return this._messageRefs.get(String(roundId)) || null;
   }
 
+  clearMessageRef(roundId) {
+    if (!roundId) return;
+    this._messageRefs.delete(String(roundId));
+    this.db.run('UPDATE multiplayer_rounds SET message_id = NULL WHERE round_id = ?', [
+      String(roundId),
+    ]);
+  }
+
+  /**
+   * Tự động xóa các bảng kết quả / tạm ngừng của phiên cũ ngay khi chuyển sang phiên mới,
+   * giữ kênh trò chơi luôn gọn gàng, sáng thoáng (chỉ hiện duy nhất phiên hiện tại).
+   */
+  async cleanupPreviousRoundBoards(guildId, gameId, excludeRoundId, extraMsg = null) {
+    if (!guildId || !gameId) return 0;
+    const currentMsg = excludeRoundId ? this.getMessageRef(excludeRoundId) : null;
+    const currentMsgId = currentMsg?.id ? String(currentMsg.id) : null;
+    const deletedMsgIds = new Set();
+    let deletedCount = 0;
+
+    const oldRounds = this.db.all(
+      `SELECT * FROM multiplayer_rounds
+       WHERE guild_id = ? AND game_id = ?
+         AND round_id != ?
+         AND status IN (?, ?)
+       ORDER BY created_at DESC
+       LIMIT 5`,
+      [
+        String(guildId),
+        String(gameId),
+        String(excludeRoundId || ''),
+        MP_ROUND_STATUS.COMPLETED,
+        MP_ROUND_STATUS.CANCELLED,
+      ]
+    );
+
+    for (const r of oldRounds) {
+      const msg = await this._resolveBoardMessage(r);
+      this.clearMessageRef(r.round_id);
+      if (!msg || msg === currentMsg) continue;
+      const mid = msg.id ? String(msg.id) : null;
+      if (mid && (mid === currentMsgId || deletedMsgIds.has(mid))) continue;
+      if (typeof msg.delete === 'function') {
+        const ok = await msg
+          .delete()
+          .then(() => true)
+          .catch(() => false);
+        if (ok) {
+          if (mid) deletedMsgIds.add(mid);
+          deletedCount += 1;
+        }
+      }
+    }
+
+    if (extraMsg && extraMsg !== currentMsg && typeof extraMsg.delete === 'function') {
+      const extraId = extraMsg.id ? String(extraMsg.id) : null;
+      if (!extraId || (extraId !== currentMsgId && !deletedMsgIds.has(extraId))) {
+        const ok = await extraMsg
+          .delete()
+          .then(() => true)
+          .catch(() => false);
+        if (ok) deletedCount += 1;
+      }
+    }
+
+    return deletedCount;
+  }
+
   // ==========================================================================
   // Tiện ích Cấu hình & Kiểm tra Quyền hạn Server-side
   // ==========================================================================
