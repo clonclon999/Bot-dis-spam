@@ -12,6 +12,7 @@ import {
 import {
   GAME_CATALOG,
   GAME_IDS,
+  MULTIPLAYER_GAME_IDS,
   OFFICIAL_GAME_ORDER,
   SHOP_ITEMS,
   TITLES,
@@ -47,11 +48,17 @@ function getSys(ctx) {
   return ctx?.systems || ctx;
 }
 
-function getLivePlayersForGame(gameId, systems) {
+function getLivePlayersForGame(gameId, systems, guildId = null) {
   if (gameId === GAME_IDS.NOITU) {
     return systems.wordChainSystem?.getActivePlayerCount?.() ?? 0;
   }
-  return systems.gameSystem?.getActivePlayerCount?.(gameId) ?? 0;
+  const soloCount = systems.gameSystem?.getActivePlayerCount?.(gameId) ?? 0;
+  let mpCount = 0;
+  if (guildId && MULTIPLAYER_GAME_IDS.includes(gameId)) {
+    const activeMp = systems.multiplayerRoundSystem?.getActiveRounds?.(guildId, gameId) || [];
+    mpCount = activeMp.reduce((s, r) => s + (Number(r.total_players) || 0), 0);
+  }
+  return soloCount + mpCount;
 }
 
 function getGameStatusLine(gameId, guildId, systems) {
@@ -64,12 +71,21 @@ function getGameStatusLine(gameId, guildId, systems) {
     allowedChannels.length > 0
       ? allowedChannels.map((id) => `<#${id}>`).join(', ')
       : '*(Chưa gán kênh)*';
-  const activeCount = getLivePlayersForGame(gameId, systems);
+  const activeCount = getLivePlayersForGame(gameId, systems, guildId);
+  const activeMp =
+    guildId && MULTIPLAYER_GAME_IDS.includes(gameId)
+      ? systems.multiplayerRoundSystem?.getActiveRounds?.(guildId, gameId) || []
+      : [];
+  const statusText = !enabled
+    ? '🔴 Bảo trì'
+    : activeMp.length > 0
+      ? `🟢 Đang chạy phiên #${activeMp[0].round_id}`
+      : '🟢 Mở';
 
   return {
     enabled,
     allowedChannels,
-    statusText: enabled ? '🟢 Mở' : '🔴 Bảo trì',
+    statusText,
     channelBadge,
     activeCount,
   };
@@ -313,13 +329,27 @@ export function buildGameDetailPayload(
     children: cardChildren,
   });
 
-  const actionRow = new ActionRowBuilder().addComponents(
+  const actionButtons = [
     new ButtonBuilder()
       .setCustomId(`gc:join_now:${user.id}:${meta.id}`)
       .setLabel('Mở Bàn Chơi')
       .setEmoji('🎮')
       .setStyle(ButtonStyle.Success)
       .setDisabled(!st.enabled),
+  ];
+
+  if (MULTIPLAYER_GAME_IDS.includes(meta.id)) {
+    actionButtons.push(
+      new ButtonBuilder()
+        .setCustomId(`mp:start:${meta.id}`)
+        .setLabel('Mở Phiên Chung')
+        .setEmoji('🏟️')
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(!st.enabled)
+    );
+  }
+
+  actionButtons.push(
     new ButtonBuilder()
       .setCustomId(`gc:rules:${user.id}:${meta.id}:${showRulesExpanded ? '0' : '1'}`)
       .setLabel(showRulesExpanded ? 'Thu Gọn Luật' : 'Xem Luật Chi Tiết')
@@ -331,6 +361,8 @@ export function buildGameDetailPayload(
       .setEmoji('📋')
       .setStyle(ButtonStyle.Secondary)
   );
+
+  const actionRow = new ActionRowBuilder().addComponents(...actionButtons);
 
   const navCard = createContainer({
     accentColor: THEME.NEON_PURPLE,

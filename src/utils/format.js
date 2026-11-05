@@ -74,3 +74,51 @@ export function getVnWeekKey(now = Date.now()) {
   const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
 }
+
+/**
+ * Phân tích chuỗi tiền VNĐ nhập từ người dùng (hỗ trợ `10000`, `10.000`, `50k`, `1m`, `1tr`, `all`, `max`, `half`).
+ * @param {string | number} raw
+ * @param {number} [maxAvailable=0]
+ * @returns {number}
+ */
+export function parseAmountInput(raw, maxAvailable = 0) {
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+  }
+  const str = String(raw ?? '').trim().toLowerCase();
+  if (!str) return 0;
+
+  if (str === 'all' || str === 'max' || str === 'tattay' || str === 'tat tay') {
+    return Math.max(0, Math.floor(Number(maxAvailable) || 0));
+  }
+  if (str === 'half' || str === '1/2' || str === 'nua') {
+    return Math.max(0, Math.floor((Number(maxAvailable) || 0) / 2));
+  }
+
+  const normalized = str.replace(/[\s,_₫]+/g, '').replace(/vnd$/i, '');
+  const match = normalized.match(/^(\d+(?:[.,]\d+)?)(k|nghin|ngan|m|tr|trieu|b|ty)?$/i);
+  if (!match) {
+    const digitsOnly = normalized.replace(/\./g, '');
+    if (/^\d+$/.test(digitsOnly)) {
+      return Math.floor(Number(digitsOnly));
+    }
+    return 0;
+  }
+
+  const unit = (match[2] || '').toLowerCase();
+  if (!unit) {
+    const plainDigits = match[1].replace(/[.,]/g, '');
+    return /^\d+$/.test(plainDigits) ? Math.floor(Number(plainDigits)) : 0;
+  }
+
+  const val = Number(match[1].replace(',', '.'));
+  if (!Number.isFinite(val) || val <= 0) return 0;
+
+  let mult = 1;
+  if (unit === 'k' || unit === 'nghin' || unit === 'ngan') mult = 1_000;
+  else if (unit === 'm' || unit === 'tr' || unit === 'trieu') mult = 1_000_000;
+  else if (unit === 'b' || unit === 'ty') mult = 1_000_000_000;
+
+  return Math.floor(val * mult);
+}
+

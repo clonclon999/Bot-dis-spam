@@ -56,10 +56,16 @@ export function createBotClient({ env, systems, ...legacyDeps }) {
   });
 
   activeContext?.logSystem?.attachClient?.(client);
+  activeContext?.multiplayerRoundSystem?.attachClient?.(client);
 
-  client.once(Events.ClientReady, (readyClient) =>
-    handleClientReady(readyClient, env)
-  );
+  client.once(Events.ClientReady, async (readyClient) => {
+    await handleClientReady(readyClient, env);
+    try {
+      await activeContext?.multiplayerRoundSystem?.recoverActiveRounds?.();
+    } catch (err) {
+      logger.error('MultiplayerRecovery', 'Lỗi khôi phục phiên cược chung sau khởi động', err);
+    }
+  });
 
   client.on(Events.MessageCreate, (message) =>
     handleMessageCreate(message, activeContext)

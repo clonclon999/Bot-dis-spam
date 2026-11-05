@@ -11,12 +11,12 @@ import {
 import { createBotSystems } from '../src/systems/index.js';
 import { extractCv2Text, validateCv2Payload } from '../src/ui/componentsV2.js';
 
-describe('Slash Command /help, /menu & Central 38-Command Registry (Components V2)', () => {
-  it('đăng ký đầy đủ 38 Slash Commands chuẩn giới hạn Discord API (bao gồm /games & /noitu)', () => {
+describe('Slash Command /help, /menu & Central 39-Command Registry (Components V2)', () => {
+  it('đăng ký đầy đủ 39 Slash Commands chuẩn giới hạn Discord API (bao gồm /game, /games & /noitu)', () => {
     const allJson = getSlashCommandsJSON();
-    assert.equal(allJson.length, 38);
+    assert.equal(allJson.length, 39);
     for (const name of [
-      'help', 'menu', 'games', 'balance', 'daily', 'baucua', 'taixiu', 'noitu',
+      'help', 'menu', 'game', 'games', 'balance', 'daily', 'baucua', 'taixiu', 'noitu',
       'quest', 'shop', 'pet', 'profile', 'rob', 'event', 'admin', 'owner', 'antispam',
     ]) {
       assert.ok(COMMAND_MAP.has(name), `Thiếu lệnh /${name}`);

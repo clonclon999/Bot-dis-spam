@@ -278,4 +278,68 @@ CREATE TABLE IF NOT EXISTS noitu_stats (
 CREATE INDEX IF NOT EXISTS idx_noitu_stats_wins ON noitu_stats (wins DESC, best_streak DESC);
 CREATE INDEX IF NOT EXISTS idx_noitu_stats_streak ON noitu_stats (best_streak DESC, wins DESC);
 CREATE INDEX IF NOT EXISTS idx_noitu_stats_active ON noitu_stats (total_matches DESC, wins DESC);
+
+-- 17. Phiên Đặt Cược Nhiều Người Chơi (Multiplayer Round System — PUBLIC START)
+CREATE TABLE IF NOT EXISTS multiplayer_rounds (
+  round_id TEXT PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  message_id TEXT DEFAULT NULL,
+  table_index INTEGER NOT NULL DEFAULT 1,
+  game_id TEXT NOT NULL CHECK(game_id IN ('baucua', 'taixiu', 'race')),
+  status TEXT NOT NULL CHECK(status IN ('WAITING', 'BETTING', 'LOCKED', 'DRAWING', 'SETTLING', 'COMPLETED', 'CANCELLED')),
+  started_by TEXT NOT NULL,
+  started_by_name TEXT NOT NULL DEFAULT '',
+  duration_sec INTEGER NOT NULL CHECK(duration_sec >= 5),
+  starts_at INTEGER NOT NULL,
+  ends_at INTEGER NOT NULL,
+  locked_at INTEGER DEFAULT NULL,
+  completed_at INTEGER DEFAULT NULL,
+  cancelled_by TEXT DEFAULT NULL,
+  cancel_reason TEXT DEFAULT NULL,
+  result_json TEXT DEFAULT NULL,
+  settled INTEGER NOT NULL DEFAULT 0 CHECK(settled IN (0, 1)),
+  refunded INTEGER NOT NULL DEFAULT 0 CHECK(refunded IN (0, 1)),
+  total_players INTEGER NOT NULL DEFAULT 0 CHECK(total_players >= 0),
+  total_bet_vnd INTEGER NOT NULL DEFAULT 0 CHECK(total_bet_vnd >= 0),
+  total_payout_vnd INTEGER NOT NULL DEFAULT 0 CHECK(total_payout_vnd >= 0),
+  total_won_vnd INTEGER NOT NULL DEFAULT 0 CHECK(total_won_vnd >= 0),
+  total_lost_vnd INTEGER NOT NULL DEFAULT 0 CHECK(total_lost_vnd >= 0),
+  notified_30s INTEGER NOT NULL DEFAULT 0 CHECK(notified_30s IN (0, 1)),
+  notified_10s INTEGER NOT NULL DEFAULT 0 CHECK(notified_10s IN (0, 1)),
+  notified_5s INTEGER NOT NULL DEFAULT 0 CHECK(notified_5s IN (0, 1)),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mp_rounds_active
+  ON multiplayer_rounds (guild_id, game_id, status);
+CREATE INDEX IF NOT EXISTS idx_mp_rounds_history
+  ON multiplayer_rounds (guild_id, game_id, created_at DESC);
+
+-- 18. Danh Sách Vé Cược Cá Nhân Của Từng Phiên Chung (ACID + Chống Trả Thưởng/Hoàn Tiền Kép)
+CREATE TABLE IF NOT EXISTS multiplayer_bets (
+  bet_id TEXT PRIMARY KEY,
+  round_id TEXT NOT NULL,
+  guild_id TEXT NOT NULL,
+  game_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  username TEXT NOT NULL DEFAULT '',
+  choice TEXT NOT NULL,
+  amount INTEGER NOT NULL CHECK(amount > 0),
+  status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'CANCELLED', 'SETTLED', 'REFUNDED')),
+  payout INTEGER NOT NULL DEFAULT 0 CHECK(payout >= 0),
+  net INTEGER NOT NULL DEFAULT 0,
+  hits INTEGER NOT NULL DEFAULT 0,
+  settled_tx_done INTEGER NOT NULL DEFAULT 0 CHECK(settled_tx_done IN (0, 1)),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mp_bets_round_status
+  ON multiplayer_bets (round_id, status);
+CREATE INDEX IF NOT EXISTS idx_mp_bets_round_user
+  ON multiplayer_bets (round_id, user_id, status);
+CREATE INDEX IF NOT EXISTS idx_mp_bets_user_time
+  ON multiplayer_bets (user_id, created_at DESC);
 `;

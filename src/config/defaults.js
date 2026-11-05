@@ -63,6 +63,17 @@ export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
   noituTimeoutSec: 30,
   noituCooldownSec: 5,
 
+  // Phiên Đặt Cược Nhiều Người Chơi (Multiplayer Round System — PUBLIC START)
+  mpRoundDurations: {
+    baucua: 60, // Bầu Cua: 60 giây
+    taixiu: 60, // Tài Xỉu: 60 giây
+    race: 90, // Đua Thú: 90 giây
+  },
+  mpAllowEditCancelBet: true, // Thành viên được sửa/hủy cược cá nhân khi phiên đang BETTING
+  mpMultiTableEnabled: false, // Chỉ OWNER mới được bật nhiều bàn cùng lúc
+  mpMaxTablesPerGame: 3,
+  mpTaixiuTripleRule: 'house_wins', // Công bố trước phiên: Tổng 3 hoặc 18 = Nhà cái thắng
+
   // Kênh log chuyên biệt
   logChannels: {
     economy: null,

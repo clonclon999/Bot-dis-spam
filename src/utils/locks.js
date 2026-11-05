@@ -62,3 +62,34 @@ export class ConcurrencyGuard {
 }
 
 export const globalGuard = new ConcurrencyGuard();
+
+/** @type {Map<string, Promise<any>>} */
+const serializedUserQueues = new Map();
+
+/**
+ * Khóa tuần tự hóa FIFO trên từng khóa `key` (bảo đảm nhiều thao tác đồng thời không bị mất lượt và chạy tuần tự 100%).
+ * @template T
+ * @param {string} key
+ * @param {() => Promise<T> | T} fn
+ * @returns {Promise<T>}
+ */
+export async function withUserLock(key, fn) {
+  const k = String(key);
+  const prev = serializedUserQueues.get(k) || Promise.resolve();
+  let release;
+  const next = new Promise((resolve) => {
+    release = resolve;
+  });
+  const chain = prev.then(() => next, () => next);
+  serializedUserQueues.set(k, chain);
+
+  await prev.catch(() => {});
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (serializedUserQueues.get(k) === chain) {
+      serializedUserQueues.delete(k);
+    }
+  }
+}

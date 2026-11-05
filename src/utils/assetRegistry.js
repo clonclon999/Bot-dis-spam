@@ -38,8 +38,13 @@ export const ASSET_PATHS = Object.freeze({
   GAME_COINFLIP: 'games/coinflip.png',
   GAME_RACE: 'games/race.png',
 
+  BAUCUA_BANNER_3D: 'baucua/banner_3d.png',
   BAUCUA_GRID: 'baucua/board_grid.png',
+  BAUCUA_CASINO_TABLE: 'baucua/casino_table.png',
   BAUCUA_SHAKE_GIF: 'baucua/baucua_shake.gif',
+  BAUCUA_WIN: 'baucua/win.png',
+  BAUCUA_LOSE: 'baucua/lose.png',
+  BAUCUA_SPECIAL_TRIPLE: 'baucua/special_triple.png',
   BAUCUA_MASCOT: Object.freeze({
     bau: 'baucua/bau.png',
     cua: 'baucua/cua.png',
@@ -48,6 +53,23 @@ export const ASSET_PATHS = Object.freeze({
     ga: 'baucua/ga.png',
     nai: 'baucua/nai.png',
   }),
+  BAUCUA_DICE: Object.freeze({
+    bau: 'baucua/dice_bau.png',
+    cua: 'baucua/dice_cua.png',
+    tom: 'baucua/dice_tom.png',
+    ca: 'baucua/dice_ca.png',
+    ga: 'baucua/dice_ga.png',
+    nai: 'baucua/dice_nai.png',
+  }),
+
+  TAIXIU_BANNER_3D: 'taixiu/banner_3d.png',
+  TAIXIU_TABLE_3D: 'taixiu/table_3d.png',
+  TAIXIU_ZONE_TAI: 'taixiu/zone_tai.png',
+  TAIXIU_ZONE_XIU: 'taixiu/zone_xiu.png',
+  TAIXIU_WIN: 'taixiu/win.png',
+  TAIXIU_LOSE: 'taixiu/lose.png',
+  TAIXIU_RESULT_BOARD: 'taixiu/result_board.png',
+  TAIXIU_SPECIAL_TRIPLE: 'taixiu/special_triple.png',
 
   DICE_ROLL_GIF: 'dice/dice_roll.gif',
   DICE_FACE: Object.freeze({
@@ -59,20 +81,38 @@ export const ASSET_PATHS = Object.freeze({
     6: 'dice/dice_6.png',
   }),
 
+  NOITU_ICON: 'noitu/icon.png',
+  NOITU_TIMER_GIF: 'noitu/noitu_timer.gif',
+  NOITU_WIN: 'noitu/win.png',
+  NOITU_LOSE: 'noitu/lose.png',
+
+  COIN_ICON: 'coinflip/icon.png',
   COIN_FLIP_GIF: 'coinflip/coin_flip.gif',
   COIN_SAP: 'coinflip/coin_sap.png',
   COIN_NGUA: 'coinflip/coin_ngua.png',
+  COIN_WIN: 'coinflip/win.png',
+  COIN_LOSE: 'coinflip/lose.png',
 
+  RPS_ICON: 'rps/icon.png',
   RPS_COUNTDOWN_GIF: 'rps/rps_countdown.gif',
+  RPS_WIN: 'rps/win.png',
+  RPS_LOSE: 'rps/lose.png',
   RPS_HAND: Object.freeze({
     rock: 'rps/rock.png',
     paper: 'rps/paper.png',
     scissors: 'rps/scissors.png',
   }),
 
+  GUESS_ICON: 'guess/icon.png',
   GUESS_VAULT_GIF: 'guess/vault_open.gif',
+  GUESS_WIN: 'guess/win.png',
+  GUESS_LOSE: 'guess/lose.png',
 
+  RACE_ICON: 'race/icon.png',
+  RACE_BANNER_3D: 'race/banner_3d.png',
   RACE_RUN_GIF: 'race/race_run.gif',
+  RACE_WIN: 'race/win.png',
+  RACE_LOSE: 'race/lose.png',
   RACE_ANIMAL: Object.freeze({
     horse: 'race/horse.png',
     cheetah: 'race/cheetah.png',
@@ -161,7 +201,10 @@ export function buildBauCuaRollGalleryAssets(rolledMascots) {
     const id = typeof m === 'string' ? m : m.id;
     const label = typeof m === 'string' ? m.toUpperCase() : m.name;
     const fileName = `bc_rolled_${idx + 1}_${id}.png`;
-    const att = buildAssetAttachment(ASSET_PATHS.BAUCUA_MASCOT[id] || ASSET_PATHS.BAUCUA_MASCOT.bau, fileName);
+    const att = buildAssetAttachment(
+      ASSET_PATHS.BAUCUA_DICE[id] || ASSET_PATHS.BAUCUA_MASCOT[id] || ASSET_PATHS.BAUCUA_MASCOT.bau,
+      fileName
+    );
     files.push(att.attachment);
     items.push({
       url: att.url,
@@ -222,6 +265,132 @@ export function buildRpsDuelGalleryAssets(move1, move2, label1 = 'Bạn', label2
       { url: a2.url, description: `${label2} ra: ${move2.name}` },
     ],
   };
+}
+
+/**
+ * Lấy đường dẫn ảnh Thắng / Thua / Đặc Biệt RIÊNG BIỆT theo từng trò chơi (không dùng chung 1 ảnh).
+ */
+export function getDedicatedOutcomeBannerRelPath(gameId, { won = true, special = false } = {}) {
+  if (gameId === 'baucua') {
+    if (special) return ASSET_PATHS.BAUCUA_SPECIAL_TRIPLE;
+    return won ? ASSET_PATHS.BAUCUA_WIN : ASSET_PATHS.BAUCUA_LOSE;
+  }
+  if (gameId === 'taixiu') {
+    if (special) return ASSET_PATHS.TAIXIU_SPECIAL_TRIPLE;
+    return won ? ASSET_PATHS.TAIXIU_WIN : ASSET_PATHS.TAIXIU_LOSE;
+  }
+  if (gameId === 'race') {
+    return won ? ASSET_PATHS.RACE_WIN : ASSET_PATHS.RACE_LOSE;
+  }
+  if (gameId === 'noitu') {
+    return won ? ASSET_PATHS.NOITU_WIN : ASSET_PATHS.NOITU_LOSE;
+  }
+  if (gameId === 'rps') {
+    return won ? ASSET_PATHS.RPS_WIN : ASSET_PATHS.RPS_LOSE;
+  }
+  if (gameId === 'guess') {
+    return won ? ASSET_PATHS.GUESS_WIN : ASSET_PATHS.GUESS_LOSE;
+  }
+  if (gameId === 'coinflip') {
+    return won ? ASSET_PATHS.COIN_WIN : ASSET_PATHS.COIN_LOSE;
+  }
+  return won ? ASSET_PATHS.VICTORY_BANNER : ASSET_PATHS.DEFEAT_BANNER;
+}
+
+/**
+ * Tạo lưới 6 cửa Bầu Cua 3D cho phiên Multiplayer (kèm số người cược & tổng VNĐ từng cửa).
+ */
+export function buildMultiplayerBauCuaDoorsGallery(doorStats = {}) {
+  const order = [
+    { id: 'bau', name: 'Bầu' },
+    { id: 'cua', name: 'Cua' },
+    { id: 'tom', name: 'Tôm' },
+    { id: 'ca', name: 'Cá' },
+    { id: 'ga', name: 'Gà' },
+    { id: 'nai', name: 'Nai' },
+  ];
+  const files = [];
+  const items = [];
+  for (const m of order) {
+    const stat = doorStats[m.id] || { count: 0, total: 0 };
+    const fileName = `mp_bc_${m.id}.png`;
+    const att = buildAssetAttachment(ASSET_PATHS.BAUCUA_MASCOT[m.id], fileName);
+    files.push(att.attachment);
+    items.push({
+      url: att.url,
+      description: `Cửa ${m.name} • ${stat.count} người • ${Number(stat.total || 0).toLocaleString('vi-VN')} VNĐ`,
+    });
+  }
+  return { files, items };
+}
+
+/**
+ * Tạo 3 viên xúc xắc 3D Bầu Cua vừa mở bát cho phiên Multiplayer / Solo.
+ */
+export function buildBauCua3dDiceRollGallery(rolledMascots) {
+  const files = [];
+  const items = [];
+  rolledMascots.forEach((m, idx) => {
+    const id = typeof m === 'string' ? m : m.id;
+    const label = typeof m === 'string' ? m.toUpperCase() : m.name;
+    const fileName = `bc_3ddie_${idx + 1}_${id}.png`;
+    const rel = ASSET_PATHS.BAUCUA_DICE[id] || ASSET_PATHS.BAUCUA_MASCOT[id] || ASSET_PATHS.BAUCUA_MASCOT.bau;
+    const att = buildAssetAttachment(rel, fileName);
+    files.push(att.attachment);
+    items.push({
+      url: att.url,
+      description: `Xúc xắc 3D #${idx + 1}: ${label}`,
+    });
+  });
+  return { files, items };
+}
+
+/**
+ * Tạo bộ hình Khu vực TÀI + Bàn 3D + Khu vực XỈU cho phiên Tài Xỉu Multiplayer.
+ */
+export function buildMultiplayerTaiXiuDoorsGallery(doorStats = {}) {
+  const tai = doorStats.tai || { count: 0, total: 0 };
+  const xiu = doorStats.xiu || { count: 0, total: 0 };
+  const aTai = buildAssetAttachment(ASSET_PATHS.TAIXIU_ZONE_TAI, 'mp_tx_zone_tai.png');
+  const aXi = buildAssetAttachment(ASSET_PATHS.TAIXIU_ZONE_XIU, 'mp_tx_zone_xiu.png');
+  return {
+    files: [aTai.attachment, aXi.attachment],
+    items: [
+      {
+        url: aTai.url,
+        description: `Cửa TÀI (11–17) • ${tai.count} người • ${Number(tai.total || 0).toLocaleString('vi-VN')} VNĐ`,
+      },
+      {
+        url: aXi.url,
+        description: `Cửa XỈU (4–10) • ${xiu.count} người • ${Number(xiu.total || 0).toLocaleString('vi-VN')} VNĐ`,
+      },
+    ],
+  };
+}
+
+/**
+ * Tạo bộ 5 làn Chiến Thú 3D cho phiên Đua Thú Multiplayer (90s).
+ */
+export function buildMultiplayerRaceDoorsGallery(doorStats = {}) {
+  const specs = [
+    { id: 'horse', name: 'Chiến Mã Xích Thố' },
+    { id: 'cheetah', name: 'Báo Đốm Tia Chớp' },
+    { id: 'eagle', name: 'Đại Bàng Kim Dực' },
+    { id: 'wolf', name: 'Sói Bạc Bắc Cực' },
+    { id: 'tiger', name: 'Hổ Trắng Sơn Lâm' },
+  ];
+  const files = [];
+  const items = [];
+  for (const s of specs) {
+    const stat = doorStats[s.id] || { count: 0, total: 0 };
+    const att = buildAssetAttachment(ASSET_PATHS.RACE_ANIMAL[s.id], `mp_race_${s.id}.png`);
+    files.push(att.attachment);
+    items.push({
+      url: att.url,
+      description: `${s.name} • ${stat.count} người • ${Number(stat.total || 0).toLocaleString('vi-VN')} VNĐ`,
+    });
+  }
+  return { files, items };
 }
 
 /**

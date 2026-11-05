@@ -143,8 +143,8 @@ export class PanelCleaner {
       return;
     }
 
-    // Lệnh trả thưởng đơn thuần như /pay (chuyển khoản giữa 2 người) giữ lại làm biên lai giao dịch
-    if (commandName === 'pay') return;
+    // Lệnh trả thưởng đơn thuần như /pay hoặc bảng phiên chung toàn server (/game) giữ nguyên trên kênh
+    if (commandName === 'pay' || commandName === 'game') return;
 
     // Lệnh /noitu dùng bảng chung theo kênh để không chồng bảng trạng thái phòng chơi
     if (commandName === 'noitu') {

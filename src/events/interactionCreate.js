@@ -166,13 +166,14 @@ export async function handleInteractionCreate(interaction, context) {
       if (!command) return;
       await command.execute(interaction, context);
 
-      const isLiveNoituRoomBoard =
-        interaction.commandName === GAME_IDS.NOITU &&
-        ['create', 'join', 'start', 'surrender'].includes(
-          interaction.options?.getSubcommand?.(false)
-        );
+      const isLiveSharedBoard =
+        interaction.commandName === 'game' ||
+        (interaction.commandName === GAME_IDS.NOITU &&
+          ['create', 'join', 'start', 'surrender'].includes(
+            interaction.options?.getSubcommand?.(false)
+          ));
 
-      if (!isLiveNoituRoomBoard) {
+      if (!isLiveSharedBoard) {
         await globalPanelCleaner.captureInteractionReply(
           interaction,
           interaction.commandName

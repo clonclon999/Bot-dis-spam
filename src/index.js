@@ -54,6 +54,7 @@ async function bootstrap() {
 
     clearInterval(gcInterval);
     systems.wordChainSystem?.shutdownCleanup?.();
+    systems.multiplayerRoundSystem?.shutdown?.();
 
     try {
       systems.db.pruneOldHistory();

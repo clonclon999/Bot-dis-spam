@@ -333,10 +333,15 @@ async function runBauCuaConfirmedRound(editFn, user, betsMap, systems) {
     typeof m === 'string' ? BAUCUA_MASCOTS.find((x) => x.id === m) : m
   );
   const rolledIds = rolledObjs.map((m) => m.id);
+  const isTriple = rolledIds[0] === rolledIds[1] && rolledIds[1] === rolledIds[2];
   const rollGallery = buildBauCuaRollGalleryAssets(rolledObjs);
   const badge = buildAssetAttachment(
-    res.net >= 0 ? ASSET_PATHS.VICTORY_BANNER : ASSET_PATHS.DEFEAT_BANNER,
-    res.net >= 0 ? 'victory.png' : 'defeat.png'
+    isTriple
+      ? ASSET_PATHS.BAUCUA_SPECIAL_TRIPLE
+      : res.net >= 0
+        ? ASSET_PATHS.BAUCUA_WIN
+        : ASSET_PATHS.BAUCUA_LOSE,
+    res.net >= 0 ? 'baucua_win.png' : 'baucua_lose.png'
   );
 
   const payoutRows = Object.entries(res.cleanBets).map(([mId, stake]) => {
@@ -527,9 +532,14 @@ async function runTaiXiuConfirmedRound(editFn, user, choice, betAmount, systems)
 
   // Ba hình xúc xắc thực tế dừng lại + Bảng thanh toán & lịch sử cầu mới nhất
   const diceGallery = buildDiceGalleryAssets(res.dice, 'tx_rolled');
+  const isHouseTriple = res.sum === 3 || res.sum === 18;
   const resultBadge = buildAssetAttachment(
-    res.won ? ASSET_PATHS.VICTORY_BANNER : ASSET_PATHS.DEFEAT_BANNER,
-    res.won ? 'victory.png' : 'defeat.png'
+    isHouseTriple
+      ? ASSET_PATHS.TAIXIU_SPECIAL_TRIPLE
+      : res.won
+        ? ASSET_PATHS.TAIXIU_WIN
+        : ASSET_PATHS.TAIXIU_LOSE,
+    res.won ? 'taixiu_win.png' : 'taixiu_lose.png'
   );
   const dash = systems.gameSystem.getTaiXiuDashboard(user.id);
 
@@ -680,8 +690,8 @@ async function runCoinflipConfirmedRound(editFn, user, side, betAmount, systems)
     res.resultSide === 'sap' ? 'res_coin_sap.png' : 'res_coin_ngua.png'
   );
   const badge = buildAssetAttachment(
-    res.won ? ASSET_PATHS.VICTORY_BANNER : ASSET_PATHS.DEFEAT_BANNER,
-    res.won ? 'victory.png' : 'defeat.png'
+    res.won ? ASSET_PATHS.COIN_WIN : ASSET_PATHS.COIN_LOSE,
+    res.won ? 'coin_win.png' : 'coin_lose.png'
   );
 
   const resultContainer = createContainer({
@@ -816,8 +826,8 @@ async function runRpsBotConfirmedRound(editFn, user, choice, betAmount, systems)
         : '💥 BOT CHIẾN THẮNG!';
 
   const badge = buildAssetAttachment(
-    res.outcome === 'lose' ? ASSET_PATHS.DEFEAT_BANNER : ASSET_PATHS.VICTORY_BANNER,
-    res.outcome === 'lose' ? 'defeat.png' : 'victory.png'
+    res.outcome === 'lose' ? ASSET_PATHS.RPS_LOSE : ASSET_PATHS.RPS_WIN,
+    res.outcome === 'lose' ? 'rps_lose.png' : 'rps_win.png'
   );
 
   const resultContainer = createContainer({
@@ -1013,8 +1023,8 @@ async function renderFinishedGuessRound(editFn, user, turnResult) {
   });
 
   const banner = buildAssetAttachment(
-    turnResult.won ? ASSET_PATHS.VICTORY_BANNER : ASSET_PATHS.DEFEAT_BANNER,
-    turnResult.won ? 'victory.png' : 'defeat.png'
+    turnResult.won ? ASSET_PATHS.GUESS_WIN : ASSET_PATHS.GUESS_LOSE,
+    turnResult.won ? 'guess_win.png' : 'guess_lose.png'
   );
   const trail = turnResult.history
     .map((h) => `\`#${h.guess}\`${h.hint === 'correct' ? '✅' : h.hint === 'higher' ? '↑' : '↓'}`)
@@ -1152,8 +1162,8 @@ async function runRaceConfirmedRound(editFn, user, animalId, betAmount, systems)
     `winner_${res.winner.id}.png`
   );
   const banner = buildAssetAttachment(
-    res.won ? ASSET_PATHS.VICTORY_BANNER : ASSET_PATHS.DEFEAT_BANNER,
-    res.won ? 'victory.png' : 'defeat.png'
+    res.won ? ASSET_PATHS.RACE_WIN : ASSET_PATHS.RACE_LOSE,
+    res.won ? 'race_win.png' : 'race_lose.png'
   );
   const medals = ['🥇 Hạng 1', '🥈 Hạng 2', '🥉 Hạng 3', '4️⃣ Hạng 4', '5️⃣ Hạng 5'];
   const podiumLines = res.standings.map(
@@ -2045,7 +2055,7 @@ export async function handleGameComponentInteraction(interaction, ctx) {
     });
 
     const duelGallery = buildRpsDuelGalleryAssets(res.move1, res.move2, ch.p1Name, interaction.user.username);
-    const badge = buildAssetAttachment(ASSET_PATHS.VICTORY_BANNER, 'pvp_result.png');
+    const badge = buildAssetAttachment(ASSET_PATHS.RPS_WIN, 'pvp_result.png');
 
     const finalPvp = buildCv2Payload({
       containers: [

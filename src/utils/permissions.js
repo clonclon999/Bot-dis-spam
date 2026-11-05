@@ -16,6 +16,8 @@ export function isHardcodedOwner(userId) {
   return String(userId) === HARDCODED_OWNER_ID;
 }
 
+export const isOwner = isHardcodedOwner;
+
 /**
  * Xác định cấp quyền hệ thống (OWNER / ADMIN / MODERATOR / MEMBER) của một người dùng.
  * OWNER ID (`1243061570247069696`) luôn được ưu tiên tuyệt đối ở mức cao nhất.
@@ -34,6 +36,8 @@ export function resolveBotRole(db, userId) {
   if (dbRole === BOT_ROLES.MODERATOR) return BOT_ROLES.MODERATOR;
   return BOT_ROLES.MEMBER;
 }
+
+export const getUserBotRole = resolveBotRole;
 
 /**
  * Kiểm tra người dùng có đạt tối thiểu cấp quyền yêu cầu hay không.

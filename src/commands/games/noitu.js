@@ -407,7 +407,7 @@ export function buildVictoryPayload(outcome) {
         ? `\n🔥 **Chuỗi thắng hiện tại:** **${outcome.newStreak} trận liên tiếp**`
         : '';
 
-  const victoryBanner = buildAssetAttachment(ASSET_PATHS.VICTORY_BANNER, 'noitu_victory.png');
+  const victoryBanner = buildAssetAttachment(ASSET_PATHS.NOITU_WIN, 'noitu_victory.png');
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()

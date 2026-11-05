@@ -50,6 +50,44 @@ export const OFFICIAL_GAME_ORDER = Object.freeze([
 
 export const QUICK_BET_AMOUNTS = Object.freeze([100, 500, 1_000, 5_000, 10_000]);
 
+/**
+ * Các trò chơi hỗ trợ Phiên Đặt Cược Nhiều Người Chơi (Multiplayer Round System):
+ * - Ưu tiên số 1 & 2: Bầu Cua (`baucua` = 60s), Tài Xỉu (`taixiu` = 60s)
+ * - Mở rộng sau khi ổn định: Đua Thú (`race` = 90s)
+ */
+export const MULTIPLAYER_GAME_IDS = Object.freeze([
+  GAME_IDS.BAUCUA,
+  GAME_IDS.TAIXIU,
+  GAME_IDS.RACE,
+]);
+
+export const MP_ROUND_STATUS = Object.freeze({
+  WAITING: 'WAITING',
+  BETTING: 'BETTING',
+  LOCKED: 'LOCKED',
+  DRAWING: 'DRAWING',
+  SETTLING: 'SETTLING',
+  COMPLETED: 'COMPLETED',
+  CANCELLED: 'CANCELLED',
+});
+
+export const MP_ACTIVE_STATUSES = Object.freeze([
+  MP_ROUND_STATUS.WAITING,
+  MP_ROUND_STATUS.BETTING,
+  MP_ROUND_STATUS.LOCKED,
+  MP_ROUND_STATUS.DRAWING,
+  MP_ROUND_STATUS.SETTLING,
+]);
+
+export const MP_QUICK_CHIPS = Object.freeze([
+  1_000,
+  5_000,
+  10_000,
+  50_000,
+  100_000,
+  500_000,
+]);
+
 export const GAME_LABELS = Object.freeze({
   [GAME_IDS.BAUCUA]: '🎲 Bầu Cua',
   [GAME_IDS.TAIXIU]: '🎯 Tài Xỉu',
@@ -155,6 +193,10 @@ export const BAUCUA_MASCOTS = Object.freeze([
   Object.freeze({ id: 'nai', name: 'Nai', emoji: '🦌' }),
 ]);
 
+export const BAUCUA_MASCOT_MAP = Object.freeze(
+  Object.fromEntries(BAUCUA_MASCOTS.map((m) => [m.id, m]))
+);
+
 export const DICE_FACES = Object.freeze(['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅']);
 
 export const RACE_ANIMALS = Object.freeze([
@@ -164,6 +206,10 @@ export const RACE_ANIMALS = Object.freeze([
   Object.freeze({ id: 'wolf', name: 'Sói Bạc', emoji: '🐺' }),
   Object.freeze({ id: 'tiger', name: 'Hổ Trắng', emoji: '🐅' }),
 ]);
+
+export const RACE_ANIMAL_MAP = Object.freeze(
+  Object.fromEntries(RACE_ANIMALS.map((a) => [a.id, a]))
+);
 
 export const RPS_CHOICES = Object.freeze({
   rock: Object.freeze({ id: 'rock', name: 'Búa', emoji: '✊', beats: 'scissors' }),

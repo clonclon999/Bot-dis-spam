@@ -1,4 +1,5 @@
 import { registerNoituUiHooks } from '../commands/games/noitu.js';
+import { buildMultiplayerBoardPayload } from '../commands/games/multiplayerRound.js';
 import { GameDatabase } from '../database/db.js';
 import { MentionDetector } from '../services/mentionDetector.js';
 import { PunishmentService } from '../services/punishmentService.js';
@@ -10,6 +11,7 @@ import { EventSystem } from './eventSystem.js';
 import { GameSystem } from './gameSystem.js';
 import { LevelSystem } from './levelSystem.js';
 import { LogSystem } from './logSystem.js';
+import { MultiplayerRoundSystem } from './multiplayerRoundSystem.js';
 import { PetSystem } from './petSystem.js';
 import { QuestSystem } from './questSystem.js';
 import { ShopSystem } from './shopSystem.js';
@@ -66,6 +68,15 @@ export async function createBotSystems(dataDir) {
   });
   registerNoituUiHooks(wordChainSystem);
 
+  const multiplayerRoundSystem = new MultiplayerRoundSystem({
+    db,
+    economySystem,
+    levelSystem,
+    questSystem,
+    eventSystem,
+    logSystem,
+  });
+
   // Liên kết phụ thuộc hai chiều sạch sẽ
   levelSystem.bindSystems({ petSystem, questSystem, eventSystem });
   petSystem.bindSystems({ economySystem, levelSystem });
@@ -73,7 +84,7 @@ export async function createBotSystems(dataDir) {
   bankSystem.bindSystems({ questSystem, levelSystem });
   questSystem.bindSystems({ economySystem, levelSystem, eventSystem });
 
-  return {
+  const systems = {
     db,
     guildStore,
     mentionDetector,
@@ -89,5 +100,18 @@ export async function createBotSystems(dataDir) {
     crimeSystem,
     gameSystem,
     wordChainSystem,
+    multiplayerRoundSystem,
   };
+
+  multiplayerRoundSystem.setBoardRenderer(async (snapshot, meta = {}) => {
+    const msg = meta.message;
+    if (!msg || typeof msg.edit !== 'function') return;
+    const payload = buildMultiplayerBoardPayload(snapshot, systems, {
+      ...meta,
+      isEdit: true,
+    });
+    await msg.edit(payload);
+  });
+
+  return systems;
 }

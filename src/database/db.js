@@ -80,6 +80,29 @@ export class GameDatabase {
     } catch {
       // Bỏ qua nếu cột đã tồn tại
     }
+
+    // Đảm bảo các cột nâng cấp của multiplayer_rounds luôn hiện diện khi migrate từ bản cũ
+    try {
+      const mpCols = this.all('PRAGMA table_info(multiplayer_rounds)');
+      if (mpCols.length > 0) {
+        const colNames = new Set(mpCols.map((c) => c.name));
+        const alterDefs = [
+          ['table_index', 'INTEGER NOT NULL DEFAULT 1'],
+          ['notified_30s', 'INTEGER NOT NULL DEFAULT 0'],
+          ['notified_10s', 'INTEGER NOT NULL DEFAULT 0'],
+          ['notified_5s', 'INTEGER NOT NULL DEFAULT 0'],
+          ['total_won_vnd', 'INTEGER NOT NULL DEFAULT 0'],
+          ['total_lost_vnd', 'INTEGER NOT NULL DEFAULT 0'],
+        ];
+        for (const [col, def] of alterDefs) {
+          if (!colNames.has(col)) {
+            this.db.run(`ALTER TABLE multiplayer_rounds ADD COLUMN ${col} ${def}`);
+          }
+        }
+      }
+    } catch {
+      // Bỏ qua nếu cột đã tồn tại
+    }
   }
 
   _loadOrSeedSettings() {
@@ -265,10 +288,13 @@ export class GameDatabase {
    * Thực thi câu lệnh ghi SQL (`INSERT`, `UPDATE`, `DELETE`).
    * @param {string} sql
    * @param {any[]} [params=[]]
+   * @returns {{ changes: number }}
    */
   run(sql, params = []) {
     this.db.run(sql, params);
+    const changes = Number(this.db.getRowsModified?.() ?? 0);
     this._scheduleFlush();
+    return { changes };
   }
 
   /**
@@ -553,6 +579,19 @@ export class GameDatabase {
         `DELETE FROM noitu_rooms WHERE status NOT IN ('waiting', 'playing') AND room_id NOT IN (
            SELECT room_id FROM noitu_rooms WHERE status NOT IN ('waiting', 'playing') ORDER BY created_at DESC LIMIT 3000
          )`
+      );
+      this.run(
+        `DELETE FROM multiplayer_rounds
+         WHERE status IN ('COMPLETED', 'CANCELLED')
+           AND round_id NOT IN (
+             SELECT round_id FROM multiplayer_rounds
+             WHERE status IN ('COMPLETED', 'CANCELLED')
+             ORDER BY created_at DESC LIMIT 3000
+           )`
+      );
+      this.run(
+        `DELETE FROM multiplayer_bets
+         WHERE round_id NOT IN (SELECT round_id FROM multiplayer_rounds)`
       );
     });
   }
