@@ -87,6 +87,15 @@ export class MultiplayerRoundSystem {
     /** @type {Map<string, ReturnType<typeof setTimeout>>} roundId -> coalesced render timer */
     this._renderDebounce = new Map();
 
+    /** @type {Map<string, ReturnType<typeof setTimeout>>} sourceRoundId -> rest delay timer */
+    this._autoNextTimers = new Map();
+
+    /** @type {boolean} Cờ khóa không cho Auto Next tự tạo phiên giữa lúc đang recover trạng thái */
+    this._isRecovering = false;
+
+    /** @type {((newSnapshot: object, prevRound: object, prevMsg: object | null) => Promise<void>) | null} */
+    this.autoStartBoardPublisher = null;
+
     /** @type {Map<string, object>} `${channelId}:${messageId}` -> cached Message reference */
     this._messageRefs = new Map();
 
@@ -102,6 +111,10 @@ export class MultiplayerRoundSystem {
 
   setBoardRenderer(fn) {
     this.boardRenderer = fn;
+  }
+
+  setAutoStartBoardPublisher(fn) {
+    this.autoStartBoardPublisher = fn;
   }
 
   setUserChipPreference(userId, pref) {
@@ -166,7 +179,259 @@ export class MultiplayerRoundSystem {
     return Math.max(1, Math.min(10, Number(this.db.getSetting('mpMaxTablesPerGame')) || 3));
   }
 
-  getSettingsSummary() {
+  /**
+   * Kiểm tra trò chơi hoặc toàn hệ thống có đang bị ADMIN/OWNER tạm dừng hay không.
+   */
+  isGamePausedOrDisabled(gameId) {
+    if (this.db.getSetting('maintenanceMode') === true) return true;
+    const gamesEnabled = this.db.getSetting('gamesEnabled') || {};
+    return gamesEnabled[gameId] === false;
+  }
+
+  /**
+   * Lấy cấu hình Auto Next Round hiệu lực cho một máy chủ (kết hợp mặc định hệ thống + ghi đè theo Guild).
+   */
+  getAutoNextConfig(guildId = null) {
+    const globalEnabled = this.db.getSetting('mpAutoNextEnabled') !== false;
+    const rawDelay = Number(this.db.getSetting('mpAutoNextDelaySec'));
+    const globalDelay = Number.isFinite(rawDelay) && rawDelay >= 1 ? Math.min(600, Math.floor(rawDelay)) : 10;
+    const rawGames = this.db.getSetting('mpAutoNextGames') || {};
+    const globalGames = {
+      [GAME_IDS.BAUCUA]: rawGames[GAME_IDS.BAUCUA] !== false,
+      [GAME_IDS.TAIXIU]: rawGames[GAME_IDS.TAIXIU] !== false,
+      [GAME_IDS.RACE]: rawGames[GAME_IDS.RACE] === true,
+    };
+    const globalOnCancelled = this.db.getSetting('mpAutoNextOnCancelled') === true;
+
+    if (!guildId) {
+      return {
+        enabled: globalEnabled,
+        delaySec: globalDelay,
+        games: globalGames,
+        allowOnCancelled: globalOnCancelled,
+      };
+    }
+
+    const overridesAll = this.db.getSetting('mpAutoNextGuildOverrides') || {};
+    const ov = overridesAll[String(guildId)];
+    if (!ov || typeof ov !== 'object') {
+      return {
+        enabled: globalEnabled,
+        delaySec: globalDelay,
+        games: globalGames,
+        allowOnCancelled: globalOnCancelled,
+      };
+    }
+
+    const ovDelay = Number(ov.delaySec);
+    return {
+      enabled: typeof ov.enabled === 'boolean' ? ov.enabled : globalEnabled,
+      delaySec:
+        Number.isFinite(ovDelay) && ovDelay >= 1 ? Math.min(600, Math.floor(ovDelay)) : globalDelay,
+      games: {
+        [GAME_IDS.BAUCUA]:
+          typeof ov.games?.[GAME_IDS.BAUCUA] === 'boolean'
+            ? ov.games[GAME_IDS.BAUCUA]
+            : globalGames[GAME_IDS.BAUCUA],
+        [GAME_IDS.TAIXIU]:
+          typeof ov.games?.[GAME_IDS.TAIXIU] === 'boolean'
+            ? ov.games[GAME_IDS.TAIXIU]
+            : globalGames[GAME_IDS.TAIXIU],
+        [GAME_IDS.RACE]:
+          typeof ov.games?.[GAME_IDS.RACE] === 'boolean'
+            ? ov.games[GAME_IDS.RACE]
+            : globalGames[GAME_IDS.RACE],
+      },
+      allowOnCancelled:
+        typeof ov.allowOnCancelled === 'boolean' ? ov.allowOnCancelled : globalOnCancelled,
+    };
+  }
+
+  shouldScheduleAutoNext(guildId, gameId, { wasCancelled = false } = {}) {
+    if (!this.isSupportedGame(gameId)) return { allowed: false, delaySec: 10 };
+    if (this.isGamePausedOrDisabled(gameId)) return { allowed: false, delaySec: 10 };
+    const cfg = this.getAutoNextConfig(guildId);
+    if (!cfg.enabled) return { allowed: false, delaySec: cfg.delaySec };
+    if (!cfg.games[gameId]) return { allowed: false, delaySec: cfg.delaySec };
+    if (wasCancelled && !cfg.allowOnCancelled) return { allowed: false, delaySec: cfg.delaySec };
+    return { allowed: true, delaySec: cfg.delaySec };
+  }
+
+  /**
+   * Liệt kê các phiên vừa kết thúc đang nằm trong thời gian nghỉ chờ tự động mở phiên mới.
+   */
+  getPendingAutoNextRounds(guildId = null, gameId = null) {
+    const clauses = ["auto_next_state = 'PENDING'"];
+    const params = [];
+    if (guildId) {
+      clauses.push('guild_id = ?');
+      params.push(String(guildId));
+    }
+    if (gameId) {
+      clauses.push('game_id = ?');
+      params.push(String(gameId));
+    }
+    return this.db.all(
+      `SELECT * FROM multiplayer_rounds
+       WHERE ${clauses.join(' AND ')}
+       ORDER BY next_round_at ASC`,
+      params
+    );
+  }
+
+  /**
+   * Bật/tắt hoặc điều chỉnh thông số Auto Next Round (Chỉ ADMIN / OWNER).
+   * LƯU Ý BẮT BUỘC (Mục 6): Tắt Auto Next chỉ hủy lịch mở phiên tự động đang chờ nghỉ,
+   * TUYỆT ĐỐI KHÔNG tự ý hủy phiên đang nhận cược (`BETTING`).
+   */
+  async updateAutoNextSettings({
+    guildId = null,
+    actorId,
+    enabled = null,
+    delaySec = null,
+    gameId = null,
+    gameEnabled = null,
+    allowOnCancelled = null,
+  }) {
+    if (!hasBotRole(this.db, actorId, BOT_ROLES.ADMIN)) {
+      return {
+        ok: false,
+        code: 'FORBIDDEN_ADMIN_ONLY',
+        error: '⛔ Chỉ **ADMIN** hoặc **OWNER** mới có quyền cấu hình Auto Next Round!',
+      };
+    }
+
+    if (gameId !== null && !this.isSupportedGame(gameId)) {
+      return {
+        ok: false,
+        code: 'UNSUPPORTED_GAME',
+        error: '❌ Trò chơi không hợp lệ (`baucua`, `taixiu`, `race`).',
+      };
+    }
+
+    let cleanDelay = null;
+    if (delaySec !== null) {
+      const parsed = Math.floor(Number(delaySec));
+      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 600) {
+        return {
+          ok: false,
+          code: 'INVALID_DELAY',
+          error: '❌ Thời gian nghỉ giữa hai phiên phải từ **1 giây** đến **600 giây**.',
+        };
+      }
+      cleanDelay = parsed;
+    }
+
+    const changes = [];
+    if (guildId) {
+      const currentEff = this.getAutoNextConfig(guildId);
+      const overridesAll = { ...(this.db.getSetting('mpAutoNextGuildOverrides') || {}) };
+      const nextOv = {
+        enabled: currentEff.enabled,
+        delaySec: currentEff.delaySec,
+        games: { ...currentEff.games },
+        allowOnCancelled: currentEff.allowOnCancelled,
+      };
+
+      if (enabled !== null) {
+        nextOv.enabled = Boolean(enabled);
+        changes.push(`Auto Next: ${nextOv.enabled ? 'BẬT' : 'TẮT'}`);
+      }
+      if (cleanDelay !== null) {
+        nextOv.delaySec = cleanDelay;
+        changes.push(`Thời gian nghỉ: ${cleanDelay}s`);
+      }
+      if (gameId !== null && gameEnabled !== null) {
+        nextOv.games[gameId] = Boolean(gameEnabled);
+        if (gameEnabled && enabled === null && !nextOv.enabled) {
+          nextOv.enabled = true;
+        }
+        changes.push(`Trò ${gameId.toUpperCase()}: ${nextOv.games[gameId] ? 'BẬT' : 'TẮT'}`);
+      }
+      if (allowOnCancelled !== null) {
+        nextOv.allowOnCancelled = Boolean(allowOnCancelled);
+        changes.push(`Tự mở sau khi hủy phiên: ${nextOv.allowOnCancelled ? 'BẬT' : 'TẮT'}`);
+      }
+
+      overridesAll[String(guildId)] = nextOv;
+      this.db.setSetting('mpAutoNextGuildOverrides', overridesAll);
+    } else {
+      if (enabled !== null) {
+        const flag = Boolean(enabled);
+        this.db.setSetting('mpAutoNextEnabled', flag);
+        changes.push(`Auto Next toàn cục: ${flag ? 'BẬT' : 'TẮT'}`);
+      }
+      if (cleanDelay !== null) {
+        this.db.setSetting('mpAutoNextDelaySec', cleanDelay);
+        changes.push(`Thời gian nghỉ: ${cleanDelay}s`);
+      }
+      if (gameId !== null && gameEnabled !== null) {
+        const curGames = { ...(this.db.getSetting('mpAutoNextGames') || {}) };
+        curGames[gameId] = Boolean(gameEnabled);
+        this.db.setSetting('mpAutoNextGames', curGames);
+        if (gameEnabled && enabled === null && this.db.getSetting('mpAutoNextEnabled') === false) {
+          this.db.setSetting('mpAutoNextEnabled', true);
+        }
+        changes.push(`Trò ${gameId.toUpperCase()}: ${curGames[gameId] ? 'BẬT' : 'TẮT'}`);
+      }
+      if (allowOnCancelled !== null) {
+        const flag = Boolean(allowOnCancelled);
+        this.db.setSetting('mpAutoNextOnCancelled', flag);
+        changes.push(`Tự mở sau khi hủy phiên: ${flag ? 'BẬT' : 'TẮT'}`);
+      }
+    }
+
+    // Nếu ADMIN tắt Auto Next (chung hoặc theo game), hủy ngay các lịch chờ nghỉ tương ứng nhưng GIỮ NGUYÊN phiên đang BETTING!
+    const cancelledPendingIds = [];
+    const pendingRows = this.getPendingAutoNextRounds(guildId, gameId);
+    for (const row of pendingRows) {
+      const check = this.shouldScheduleAutoNext(row.guild_id, row.game_id, {
+        wasCancelled: row.status === MP_ROUND_STATUS.CANCELLED,
+      });
+      if (!check.allowed) {
+        this._clearAutoNextTimer(row.round_id);
+        const upd = this.db.run(
+          `UPDATE multiplayer_rounds
+           SET auto_next_state = 'CANCELLED_BY_ADMIN', next_round_at = NULL, updated_at = ?
+           WHERE round_id = ? AND auto_next_state = 'PENDING'`,
+          [this._now(), row.round_id]
+        );
+        if (upd.changes) {
+          cancelledPendingIds.push(row.round_id);
+        }
+      }
+    }
+
+    for (const rid of cancelledPendingIds) {
+      await this._renderBoardNow(rid, { phase: 'AUTO_NEXT_CANCELLED' });
+      this._messageRefs.delete(rid);
+    }
+
+    if (changes.length > 0) {
+      const actorRole = getUserBotRole(this.db, actorId);
+      this.db.recordAudit({
+        actorId,
+        actorRole,
+        action: 'MP_AUTO_NEXT_UPDATE',
+        targetId: guildId ? `${guildId}:${gameId || 'all'}` : gameId || 'global',
+        details: changes.join(' | '),
+      });
+      this.logSystem?.send?.(
+        'admin',
+        '🔄 Cập Nhật Auto Next Round',
+        `Người thực hiện: <@${actorId}> (${actorRole})\nThay đổi: ${changes.join(' • ')}`
+      );
+    }
+
+    return {
+      ok: true,
+      changes,
+      cancelledPendingIds,
+      config: this.getAutoNextConfig(guildId),
+    };
+  }
+
+  getSettingsSummary(guildId = null) {
     const { minBet, maxBet } = this.getBetLimits();
     return {
       durations: {
@@ -180,6 +445,7 @@ export class MultiplayerRoundSystem {
       multiTableEnabled: this.isMultiTableEnabled(),
       maxTablesPerGame: this.getMaxTablesPerGame(),
       taixiuTripleRule: this.db.getSetting('mpTaixiuTripleRule') || 'house_wins',
+      autoNext: this.getAutoNextConfig(guildId),
     };
   }
 
@@ -262,12 +528,11 @@ export class MultiplayerRoundSystem {
       };
     }
 
-    const gamesEnabled = this.db.getSetting('gamesEnabled') || {};
-    if (gamesEnabled[gameId] === false) {
+    if (this.isGamePausedOrDisabled(gameId)) {
       return {
         ok: false,
         code: 'GAME_DISABLED',
-        error: '⛔ Trò chơi này hiện đang tạm đóng bởi Quản trị viên.',
+        error: '⛔ Trò chơi này hoặc hệ thống hiện đang tạm dừng bởi Quản trị viên.',
       };
     }
 
@@ -286,69 +551,118 @@ export class MultiplayerRoundSystem {
       const multiTable = this.isMultiTableEnabled();
       const maxTables = multiTable ? this.getMaxTablesPerGame() : 1;
 
-      const txOutcome = this.db.transaction(() => {
-        const placeholders = MP_ACTIVE_STATUSES.map(() => '?').join(', ');
-        const activeRows = this.db.all(
-          `SELECT * FROM multiplayer_rounds
-           WHERE guild_id = ? AND game_id = ? AND status IN (${placeholders})
-           ORDER BY table_index ASC, created_at ASC`,
-          [String(guildId), String(gameId), ...MP_ACTIVE_STATUSES]
-        );
+      let txOutcome;
+      try {
+        txOutcome = this.db.transaction(() => {
+          const placeholders = MP_ACTIVE_STATUSES.map(() => '?').join(', ');
+          const activeRows = this.db.all(
+            `SELECT * FROM multiplayer_rounds
+             WHERE guild_id = ? AND game_id = ? AND status IN (${placeholders})
+             ORDER BY table_index ASC, created_at ASC`,
+            [String(guildId), String(gameId), ...MP_ACTIVE_STATUSES]
+          );
 
-        if (activeRows.length >= maxTables) {
+          if (activeRows.length >= maxTables) {
+            return {
+              created: false,
+              roundId: activeRows[0].round_id,
+              supersededIds: [],
+            };
+          }
+
+          const usedTables = new Set(activeRows.map((r) => Number(r.table_index) || 1));
+          let tableIndex = 1;
+          while (usedTables.has(tableIndex)) {
+            tableIndex += 1;
+          }
+
+          const pendingAutoRows = this.db.all(
+            `SELECT round_id FROM multiplayer_rounds
+             WHERE guild_id = ? AND game_id = ? AND auto_next_state = 'PENDING'
+             ORDER BY completed_at DESC`,
+            [String(guildId), String(gameId)]
+          );
+          const prevRoundId = pendingAutoRows[0]?.round_id ?? null;
+
+          const roundId = this._generateUniqueRoundId(gameId, now);
+          const endsAt = now + durationSec * 1000;
+
+          // Khởi tạo ở trạng thái WAITING rồi chuyển nguyên tử sang BETTING khi mở nhận cược
+          this.db.run(
+            `INSERT INTO multiplayer_rounds (
+               round_id, guild_id, channel_id, message_id, table_index, game_id, status,
+               started_by, started_by_name, duration_sec, starts_at, ends_at,
+               settled, refunded, total_players, total_bet_vnd, total_payout_vnd,
+               total_won_vnd, total_lost_vnd, notified_30s, notified_10s, notified_5s,
+               auto_next_state, next_round_at, next_round_id, prev_round_id,
+               created_at, updated_at
+             ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'NONE', NULL, NULL, ?, ?, ?)`,
+            [
+              roundId,
+              String(guildId),
+              String(channelId),
+              tableIndex,
+              String(gameId),
+              MP_ROUND_STATUS.WAITING,
+              String(userId),
+              String(username || userId),
+              durationSec,
+              now,
+              endsAt,
+              prevRoundId,
+              now,
+              now,
+            ]
+          );
+
+          this.db.run(
+            `UPDATE multiplayer_rounds
+             SET status = ?, updated_at = ?
+             WHERE round_id = ? AND status = ?`,
+            [MP_ROUND_STATUS.BETTING, now, roundId, MP_ROUND_STATUS.WAITING]
+          );
+
+          // Nếu có phiên cũ đang chờ nghỉ Auto Next, hủy lịch chờ tự động để tránh tạo phiên trùng!
+          const supersededIds = [];
+          if (!multiTable && pendingAutoRows.length > 0) {
+            for (const pRow of pendingAutoRows) {
+              const sup = this.db.run(
+                `UPDATE multiplayer_rounds
+                 SET auto_next_state = 'SUPERSEDED_MANUAL', next_round_id = ?, next_round_at = NULL, updated_at = ?
+                 WHERE round_id = ? AND auto_next_state = 'PENDING'`,
+                [roundId, now, pRow.round_id]
+              );
+              if (sup.changes) supersededIds.push(pRow.round_id);
+            }
+          }
+
           return {
-            created: false,
-            roundId: activeRows[0].round_id,
-          };
-        }
-
-        const usedTables = new Set(activeRows.map((r) => Number(r.table_index) || 1));
-        let tableIndex = 1;
-        while (usedTables.has(tableIndex)) {
-          tableIndex += 1;
-        }
-
-        const roundId = this._generateUniqueRoundId(gameId, now);
-        const endsAt = now + durationSec * 1000;
-
-        // Khởi tạo ở trạng thái WAITING rồi chuyển nguyên tử sang BETTING khi mở nhận cược
-        this.db.run(
-          `INSERT INTO multiplayer_rounds (
-             round_id, guild_id, channel_id, message_id, table_index, game_id, status,
-             started_by, started_by_name, duration_sec, starts_at, ends_at,
-             settled, refunded, total_players, total_bet_vnd, total_payout_vnd,
-             total_won_vnd, total_lost_vnd, notified_30s, notified_10s, notified_5s,
-             created_at, updated_at
-           ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?)`,
-          [
+            created: true,
             roundId,
-            String(guildId),
-            String(channelId),
-            tableIndex,
-            String(gameId),
-            MP_ROUND_STATUS.WAITING,
-            String(userId),
-            String(username || userId),
-            durationSec,
-            now,
-            endsAt,
-            now,
-            now,
-          ]
-        );
+            supersededIds,
+          };
+        });
+      } catch (err) {
+        // Phòng vệ khóa UNIQUE ở tầng SQLite nếu có tiến trình thứ 2 vừa chèn đồng thời
+        const fallbackActive = this.getActiveRounds(guildId, gameId)[0];
+        if (fallbackActive) {
+          txOutcome = {
+            created: false,
+            roundId: fallbackActive.round_id,
+            supersededIds: [],
+          };
+        } else {
+          throw err;
+        }
+      }
 
-        this.db.run(
-          `UPDATE multiplayer_rounds
-           SET status = ?, updated_at = ?
-           WHERE round_id = ? AND status = ?`,
-          [MP_ROUND_STATUS.BETTING, now, roundId, MP_ROUND_STATUS.WAITING]
-        );
-
-        return {
-          created: true,
-          roundId,
-        };
-      });
+      if (txOutcome.supersededIds?.length) {
+        for (const oldRid of txOutcome.supersededIds) {
+          this._clearAutoNextTimer(oldRid);
+          this._renderBoardNow(oldRid, { phase: 'AUTO_NEXT_SUPERSEDED' }).catch(() => {});
+          this._messageRefs.delete(oldRid);
+        }
+      }
 
       if (!txOutcome.created) {
         const existingSnapshot = this.getRoundSnapshot(txOutcome.roundId);
@@ -1437,15 +1751,22 @@ export class MultiplayerRoundSystem {
           [key]
         );
 
+        const autoCheck = this.shouldScheduleAutoNext(fresh.guild_id, fresh.game_id, {
+          wasCancelled: false,
+        });
+        const nextAutoState = autoCheck.allowed ? 'PENDING' : 'NONE';
+        const nextRoundAt = autoCheck.allowed ? now + autoCheck.delaySec * 1000 : null;
+
         // Nếu không có người đặt cược, kết thúc phiên sạch sẽ mà KHÔNG phát sinh bất kỳ giao dịch nào!
         if (activeBets.length === 0) {
           this.db.run(
             `UPDATE multiplayer_rounds
              SET status = ?, settled = 1, completed_at = ?,
                  total_players = 0, total_bet_vnd = 0, total_payout_vnd = 0,
-                 total_won_vnd = 0, total_lost_vnd = 0, updated_at = ?
+                 total_won_vnd = 0, total_lost_vnd = 0,
+                 auto_next_state = ?, next_round_at = ?, updated_at = ?
              WHERE round_id = ?`,
-            [MP_ROUND_STATUS.COMPLETED, now, now, key]
+            [MP_ROUND_STATUS.COMPLETED, now, nextAutoState, nextRoundAt, now, key]
           );
           return;
         }
@@ -1561,7 +1882,8 @@ export class MultiplayerRoundSystem {
           `UPDATE multiplayer_rounds
            SET status = ?, settled = 1, completed_at = ?,
                total_players = ?, total_bet_vnd = ?, total_payout_vnd = ?,
-               total_won_vnd = ?, total_lost_vnd = ?, updated_at = ?
+               total_won_vnd = ?, total_lost_vnd = ?,
+               auto_next_state = ?, next_round_at = ?, updated_at = ?
            WHERE round_id = ?`,
           [
             MP_ROUND_STATUS.COMPLETED,
@@ -1571,6 +1893,8 @@ export class MultiplayerRoundSystem {
             roundTotalPayout,
             roundTotalWon,
             roundTotalLost,
+            nextAutoState,
+            nextRoundAt,
             now,
             key,
           ]
@@ -1603,7 +1927,7 @@ export class MultiplayerRoundSystem {
         }
       }
 
-      // BƯỚC 12: Hiển thị Bảng Kết Quả Chính Thức Chung Toàn Server
+      // BƯỚC 12: Hiển thị Bảng Kết Quả Chính Thức Chung Toàn Server (kèm thông báo chờ mở phiên kế tiếp nếu bật Auto Next)
       await this._renderBoardNow(key, { phase: 'COMPLETED' });
       const finalSnapshot = this.getRoundSnapshot(key);
 
@@ -1615,8 +1939,15 @@ export class MultiplayerRoundSystem {
         );
       }
 
-      // Dọn dẹp tham chiếu message sau khi kết thúc để tiết kiệm RAM
-      this._messageRefs.delete(key);
+      // Lên lịch tự động mở phiên tiếp theo (chỉ kích hoạt bộ đếm khi KHÔNG nằm giữa luồng khôi phục khởi động)
+      if (finalSnapshot?.round?.auto_next_state === 'PENDING') {
+        if (!this._isRecovering) {
+          this._scheduleAutoNextTimer(key);
+        }
+      } else {
+        this._messageRefs.delete(key);
+      }
+
       return finalSnapshot;
     } finally {
       this._finalizingRounds.delete(key);
@@ -1742,15 +2073,24 @@ export class MultiplayerRoundSystem {
         );
       }
 
+      const autoCancelCheck = this.shouldScheduleAutoNext(fresh.guild_id, fresh.game_id, {
+        wasCancelled: true,
+      });
+      const cancelAutoState = autoCancelCheck.allowed ? 'PENDING' : 'NONE';
+      const cancelNextAt = autoCancelCheck.allowed ? now + autoCancelCheck.delaySec * 1000 : null;
+
       this.db.run(
         `UPDATE multiplayer_rounds
          SET status = ?, refunded = 1, cancelled_by = ?, cancel_reason = ?,
+             auto_next_state = ?, next_round_at = ?,
              completed_at = ?, updated_at = ?
          WHERE round_id = ?`,
         [
           MP_ROUND_STATUS.CANCELLED,
           String(actorId),
           String(reason || 'Quản trị viên dừng phiên'),
+          cancelAutoState,
+          cancelNextAt,
           now,
           now,
           key,
@@ -1771,13 +2111,18 @@ export class MultiplayerRoundSystem {
         gameId: fresh.game_id,
         refundedUsersCount: refundedUsers.size,
         totalRefundedVnd: totalRefunded,
+        autoNextScheduled: autoCancelCheck.allowed,
       };
     });
 
     if (!txRes.ok) return txRes;
 
     await this._renderBoardNow(key, { phase: 'CANCELLED' });
-    this._messageRefs.delete(key);
+    if (txRes.autoNextScheduled && !this._isRecovering) {
+      this._scheduleAutoNextTimer(key);
+    } else if (!txRes.autoNextScheduled) {
+      this._messageRefs.delete(key);
+    }
 
     this.logSystem?.send?.(
       'admin',
@@ -2156,14 +2501,298 @@ export class MultiplayerRoundSystem {
   }
 
   // ==========================================================================
+  // 7B. Hệ Thống Tự Động Mở Phiên Tiếp Theo (Auto Next Round System)
+  // ==========================================================================
+
+  _clearAutoNextTimer(roundId) {
+    const key = String(roundId);
+    const t = this._autoNextTimers.get(key);
+    if (t) {
+      clearTimeout(t);
+      this._autoNextTimers.delete(key);
+    }
+  }
+
+  _scheduleAutoNextTimer(sourceRoundId) {
+    const key = String(sourceRoundId);
+    this._clearAutoNextTimer(key);
+
+    const row = this.db.get(
+      'SELECT round_id, auto_next_state, next_round_at FROM multiplayer_rounds WHERE round_id = ?',
+      [key]
+    );
+    if (!row || row.auto_next_state !== 'PENDING' || !row.next_round_at) return;
+
+    const delayMs = Math.max(0, Number(row.next_round_at) - this._now());
+    const timer = setTimeout(() => {
+      this._autoNextTimers.delete(key);
+      this.triggerAutoNextRound(key).catch((err) => {
+        logger.error(
+          'MultiplayerRoundSystem',
+          `Lỗi khi tự động mở phiên tiếp theo từ #${key}`,
+          err
+        );
+      });
+    }, delayMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    this._autoNextTimers.set(key, timer);
+  }
+
+  /**
+   * Thực thi nguyên tử việc mở phiên tiếp theo từ `sourceRoundId` sau thời gian nghỉ:
+   * - Không tạo phiên nếu Bot đang khôi phục trạng thái (`_isRecovering`).
+   * - Không tạo phiên nếu phiên trước chưa thanh toán xong (`settled === 1` hoặc `refunded === 1`).
+   * - Không tạo phiên nếu ADMIN/OWNER đã tắt Auto Next hoặc tạm dừng trò chơi trong lúc nghỉ.
+   * - Sử dụng khóa Mutex + SQLite Transaction CAS (`auto_next_state = 'PENDING'`) + Partial Unique Index
+   *   chống tuyệt đối tạo trùng phiên kể cả khi nhiều thành viên nhấn START hoặc 2 tiến trình cùng gọi.
+   */
+  async triggerAutoNextRound(sourceRoundId) {
+    const srcKey = String(sourceRoundId);
+    this._clearAutoNextTimer(srcKey);
+
+    if (this._isRecovering) {
+      return { ok: false, code: 'RECOVERING_STATE' };
+    }
+
+    const preRow = this.db.get(
+      'SELECT * FROM multiplayer_rounds WHERE round_id = ?',
+      [srcKey]
+    );
+    if (!preRow) {
+      return { ok: false, code: 'SOURCE_NOT_FOUND' };
+    }
+
+    return this._withRoundCreateLock(String(preRow.guild_id), String(preRow.game_id), async () => {
+      if (this._isRecovering) {
+        return { ok: false, code: 'RECOVERING_STATE' };
+      }
+
+      const now = this._now();
+      const durationSec = this.getRoundDurationSec(preRow.game_id);
+      const multiTable = this.isMultiTableEnabled();
+      const maxTables = multiTable ? this.getMaxTablesPerGame() : 1;
+
+      let txRes;
+      try {
+        txRes = this.db.transaction(() => {
+          const src = this.db.get(
+            'SELECT * FROM multiplayer_rounds WHERE round_id = ?',
+            [srcKey]
+          );
+          if (!src) return { ok: false, code: 'SOURCE_NOT_FOUND' };
+
+          if (src.auto_next_state !== 'PENDING') {
+            return {
+              ok: false,
+              code: 'ALREADY_PROCESSED',
+              state: src.auto_next_state,
+              nextRoundId: src.next_round_id || null,
+            };
+          }
+
+          // Bắt buộc phiên trước phải hoàn tất thanh toán / hoàn tiền xong 100%
+          const isCompletedPaid =
+            src.status === MP_ROUND_STATUS.COMPLETED && Number(src.settled) === 1;
+          const isCancelledRefunded =
+            src.status === MP_ROUND_STATUS.CANCELLED && Number(src.refunded) === 1;
+          if (!isCompletedPaid && !isCancelledRefunded) {
+            return { ok: false, code: 'PREVIOUS_NOT_SETTLED' };
+          }
+
+          // Kiểm tra lại cấu hình Auto Next & Trạng thái tạm dừng ngay thời điểm tạo
+          if (this.isGamePausedOrDisabled(src.game_id)) {
+            this.db.run(
+              `UPDATE multiplayer_rounds
+               SET auto_next_state = 'SKIPPED_PAUSED', next_round_at = NULL, updated_at = ?
+               WHERE round_id = ? AND auto_next_state = 'PENDING'`,
+              [now, srcKey]
+            );
+            return { ok: false, code: 'GAME_PAUSED' };
+          }
+
+          const autoCheck = this.shouldScheduleAutoNext(src.guild_id, src.game_id, {
+            wasCancelled: src.status === MP_ROUND_STATUS.CANCELLED,
+          });
+          if (!autoCheck.allowed) {
+            this.db.run(
+              `UPDATE multiplayer_rounds
+               SET auto_next_state = 'SKIPPED_DISABLED', next_round_at = NULL, updated_at = ?
+               WHERE round_id = ? AND auto_next_state = 'PENDING'`,
+              [now, srcKey]
+            );
+            return { ok: false, code: 'AUTO_DISABLED' };
+          }
+
+          // Kiểm tra đã có phiên đang hoạt động chưa (VD: Thành viên vừa nhấn START thủ công)
+          const placeholders = MP_ACTIVE_STATUSES.map(() => '?').join(', ');
+          const activeRows = this.db.all(
+            `SELECT * FROM multiplayer_rounds
+             WHERE guild_id = ? AND game_id = ? AND status IN (${placeholders})
+             ORDER BY table_index ASC, created_at ASC`,
+            [String(src.guild_id), String(src.game_id), ...MP_ACTIVE_STATUSES]
+          );
+
+          if (activeRows.length >= maxTables) {
+            const existingId = activeRows[0].round_id;
+            this.db.run(
+              `UPDATE multiplayer_rounds
+               SET auto_next_state = 'SUPERSEDED_ACTIVE', next_round_id = ?, next_round_at = NULL, updated_at = ?
+               WHERE round_id = ? AND auto_next_state = 'PENDING'`,
+              [existingId, now, srcKey]
+            );
+            return {
+              ok: false,
+              code: 'ACTIVE_ROUND_EXISTS',
+              roundId: existingId,
+            };
+          }
+
+          // Khóa nguyên tử CAS trên phiên nguồn — Đảm bảo 2 tiến trình gọi cùng lúc chỉ 1 bên thắng!
+          const claim = this.db.run(
+            `UPDATE multiplayer_rounds
+             SET auto_next_state = 'CREATING', updated_at = ?
+             WHERE round_id = ? AND auto_next_state = 'PENDING'`,
+            [now, srcKey]
+          );
+          if (!claim.changes) {
+            return { ok: false, code: 'ALREADY_CLAIMED' };
+          }
+
+          const usedTables = new Set(activeRows.map((r) => Number(r.table_index) || 1));
+          let tableIndex = 1;
+          while (usedTables.has(tableIndex)) {
+            tableIndex += 1;
+          }
+
+          const newRoundId = this._generateUniqueRoundId(src.game_id, now);
+          const endsAt = now + durationSec * 1000;
+
+          this.db.run(
+            `INSERT INTO multiplayer_rounds (
+               round_id, guild_id, channel_id, message_id, table_index, game_id, status,
+               started_by, started_by_name, duration_sec, starts_at, ends_at,
+               settled, refunded, total_players, total_bet_vnd, total_payout_vnd,
+               total_won_vnd, total_lost_vnd, notified_30s, notified_10s, notified_5s,
+               auto_next_state, next_round_at, next_round_id, prev_round_id,
+               created_at, updated_at
+             ) VALUES (?, ?, ?, NULL, ?, ?, ?, 'SYSTEM_AUTO', '⚡ Hệ Thống Tự Động', ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'NONE', NULL, NULL, ?, ?, ?)`,
+            [
+              newRoundId,
+              String(src.guild_id),
+              String(src.channel_id),
+              tableIndex,
+              String(src.game_id),
+              MP_ROUND_STATUS.BETTING,
+              durationSec,
+              now,
+              endsAt,
+              srcKey,
+              now,
+              now,
+            ]
+          );
+
+          this.db.run(
+            `UPDATE multiplayer_rounds
+             SET auto_next_state = 'CREATED', next_round_id = ?, next_round_at = NULL, updated_at = ?
+             WHERE round_id = ?`,
+            [newRoundId, now, srcKey]
+          );
+
+          return {
+            ok: true,
+            created: true,
+            newRoundId,
+            sourceRound: src,
+          };
+        });
+      } catch (err) {
+        const fallbackActive = this.getActiveRounds(preRow.guild_id, preRow.game_id)[0];
+        if (fallbackActive) {
+          this.db.run(
+            `UPDATE multiplayer_rounds
+             SET auto_next_state = 'SUPERSEDED_ACTIVE', next_round_id = ?, next_round_at = NULL, updated_at = ?
+             WHERE round_id = ?`,
+            [fallbackActive.round_id, now, srcKey]
+          );
+          txRes = {
+            ok: false,
+            code: 'ACTIVE_ROUND_EXISTS',
+            roundId: fallbackActive.round_id,
+          };
+        } else {
+          throw err;
+        }
+      }
+
+      if (!txRes.ok) {
+        if (
+          txRes.code === 'AUTO_DISABLED' ||
+          txRes.code === 'GAME_PAUSED' ||
+          txRes.code === 'ACTIVE_ROUND_EXISTS'
+        ) {
+          await this._renderBoardNow(srcKey, { phase: 'AUTO_NEXT_SKIPPED' });
+        }
+        this._messageRefs.delete(srcKey);
+        return txRes;
+      }
+
+      this._scheduleRoundTimers(txRes.newRoundId);
+      const newSnapshot = this.getRoundSnapshot(txRes.newRoundId);
+      const prevMsg = await this._resolveBoardMessage(txRes.sourceRound);
+
+      await this._publishAutoStartedBoard(newSnapshot, txRes.sourceRound, prevMsg);
+      this._messageRefs.delete(srcKey);
+
+      this.logSystem?.send?.(
+        'game',
+        '🔄 Tự Động Mở Phiên Tiếp Theo (Auto Next)',
+        `Trò chơi: **${txRes.sourceRound.game_id.toUpperCase()}** • Phiên trước: \`#${srcKey}\` ➡️ Phiên mới: \`#${txRes.newRoundId}\` (${durationSec}s)`
+      );
+
+      return {
+        ok: true,
+        created: true,
+        round: newSnapshot?.round || null,
+        snapshot: newSnapshot,
+      };
+    });
+  }
+
+  async _publishAutoStartedBoard(newSnapshot, sourceRound, prevMsg) {
+    if (!newSnapshot) return;
+
+    if (typeof this.autoStartBoardPublisher === 'function') {
+      try {
+        await this.autoStartBoardPublisher(newSnapshot, sourceRound, prevMsg);
+        return;
+      } catch (err) {
+        logger.warn(
+          'MultiplayerRoundSystem',
+          `Lỗi khi đăng bảng Auto Next #${newSnapshot.round.round_id}`,
+          err
+        );
+      }
+    }
+
+    // Fallback mặc định: nếu phiên trước không có người chơi hoặc chỉ có prevMsg, cập nhật trực tiếp không spam!
+    if (prevMsg && typeof prevMsg.edit === 'function') {
+      this.registerMessageRef(newSnapshot.round.round_id, prevMsg);
+      await this._renderBoardNow(newSnapshot.round.round_id, { phase: 'AUTO_STARTED' });
+    }
+  }
+
+  // ==========================================================================
   // 8. Tự Động Khôi Phục Phiên Khi Bot Khởi Động Lại (Mục 14) & Dọn Dẹp Tắt Máy
   // ==========================================================================
 
   /**
-   * Kiểm tra toàn bộ các phiên chưa hoàn tất trong SQLite khi Bot vừa khởi động lại:
-   * - Nếu đang `WAITING` / `BETTING` và `now < ends_at`: khôi phục bộ đếm thời gian còn lại.
-   * - Nếu đã quá hạn `ends_at` hoặc bị gián đoạn giữa `LOCKED` / `DRAWING` / `SETTLING`:
-   *   tự động khóa cược và tất toán an toàn bằng kết quả đã lưu (TUYỆT ĐỐI không sinh lại kết quả mới!).
+   * Kiểm tra toàn bộ các phiên chưa hoàn tất & lịch chờ Auto Next trong SQLite khi Bot khởi động lại:
+   * 1. Đặt cờ `_isRecovering = true` để KHÔNG tạo phiên mới khi đang thanh toán phiên dở dang.
+   * 2. Tiếp tục đếm ngược phiên còn hạn `ends_at`, tất toán an toàn phiên quá hạn / dở dang.
+   * 3. Sau khi hoàn tất khôi phục phiên đang chạy (`_isRecovering = false`), kiểm tra các lịch
+   *    `auto_next_state = 'PENDING'`: nếu đã hết thời gian nghỉ thì mở ngay phiên tiếp theo,
+   *    nếu vẫn trong thời gian nghỉ thì đặt lại bộ đếm cho phần giây còn lại.
    */
   async recoverActiveRounds() {
     const placeholders = MP_ACTIVE_STATUSES.map(() => '?').join(', ');
@@ -2176,41 +2805,74 @@ export class MultiplayerRoundSystem {
 
     let resumed = 0;
     let settled = 0;
+    const settledDuringRecovery = new Set();
 
-    for (const r of pendingRounds) {
-      const now = this._now();
-      if (
-        (r.status === MP_ROUND_STATUS.WAITING || r.status === MP_ROUND_STATUS.BETTING) &&
-        now < Number(r.ends_at)
-      ) {
-        if (r.status === MP_ROUND_STATUS.WAITING) {
-          this.db.run(
-            'UPDATE multiplayer_rounds SET status = ?, updated_at = ? WHERE round_id = ?',
-            [MP_ROUND_STATUS.BETTING, now, r.round_id]
-          );
+    this._isRecovering = true;
+    try {
+      for (const r of pendingRounds) {
+        const now = this._now();
+        if (
+          (r.status === MP_ROUND_STATUS.WAITING || r.status === MP_ROUND_STATUS.BETTING) &&
+          now < Number(r.ends_at)
+        ) {
+          if (r.status === MP_ROUND_STATUS.WAITING) {
+            this.db.run(
+              'UPDATE multiplayer_rounds SET status = ?, updated_at = ? WHERE round_id = ?',
+              [MP_ROUND_STATUS.BETTING, now, r.round_id]
+            );
+          }
+          this._scheduleRoundTimers(r.round_id);
+          await this._renderBoardNow(r.round_id, { phase: 'RECOVERED' });
+          resumed += 1;
+        } else {
+          await this.finalizeRound(r.round_id, { skipAnimation: true });
+          settledDuringRecovery.add(r.round_id);
+          settled += 1;
         }
-        this._scheduleRoundTimers(r.round_id);
-        await this._renderBoardNow(r.round_id, { phase: 'RECOVERED' });
-        resumed += 1;
+      }
+    } finally {
+      this._isRecovering = false;
+    }
+
+    // Giai đoạn 2: Khôi phục lịch Auto Next Round đang chờ trong Database
+    let autoNextTriggered = 0;
+    let autoNextResumed = 0;
+    const pendingAutoNext = this.getPendingAutoNextRounds();
+    for (const row of pendingAutoNext) {
+      const now = this._now();
+      const targetAt = Number(row.next_round_at) || 0;
+      if (!settledDuringRecovery.has(row.round_id) && targetAt > 0 && now >= targetAt) {
+        const res = await this.triggerAutoNextRound(row.round_id);
+        if (res.ok && res.created) autoNextTriggered += 1;
       } else {
-        await this.finalizeRound(r.round_id, { skipAnimation: true });
-        settled += 1;
+        this._scheduleAutoNextTimer(row.round_id);
+        await this._renderBoardNow(row.round_id, { phase: 'AUTO_NEXT_RECOVERED' });
+        autoNextResumed += 1;
       }
     }
 
-    if (pendingRounds.length > 0) {
+    if (pendingRounds.length > 0 || pendingAutoNext.length > 0) {
       logger.info(
         'MultiplayerRoundSystem',
-        `Khôi phục sau khởi động: Tiếp tục đếm ngược ${resumed} phiên, tất toán an toàn ${settled} phiên quá hạn.`
+        `Khôi phục sau khởi động: Tiếp tục đếm ngược ${resumed} phiên, tất toán an toàn ${settled} phiên quá hạn, kích hoạt ${autoNextTriggered} phiên kế tiếp, tiếp tục nghỉ ${autoNextResumed} lịch Auto Next.`
       );
     }
 
-    return { total: pendingRounds.length, resumed, settled };
+    return {
+      total: pendingRounds.length,
+      resumed,
+      settled,
+      autoNextTriggered,
+      autoNextResumed,
+    };
   }
 
   shutdown() {
     for (const roundId of Array.from(this._roundTimers.keys())) {
       this._clearRoundTimers(roundId);
+    }
+    for (const roundId of Array.from(this._autoNextTimers.keys())) {
+      this._clearAutoNextTimer(roundId);
     }
     for (const t of this._renderDebounce.values()) {
       clearTimeout(t);

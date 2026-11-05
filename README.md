@@ -16,6 +16,11 @@ Tối ưu hóa chuyên biệt cho gói **FREE trên `botkeep.cloud`** (`512 MB R
   - **🎲 Tài Xỉu Casino 3D (`60s` mặc định):** 2 cửa (`TÀI 11–17`, `XỈU 4–10`), trả thưởng **`2x`**; công bố rõ luật **Bộ ba đồng nhất `3` (`1-1-1`) hoặc `18` (`6-6-6`) Nhà cái thắng**.
   - **🏇 Đua Thú 3D (`90s` mặc định):** 5 chiến thú tranh tài chung toàn phòng, chiến thú về hạng `#1` trả thưởng **`4.5x`**.
 - **Vòng Đời Phiên Tự Động & Mốc Đếm Ngược:** `WAITING -> BETTING -> LOCKED -> DRAWING -> SETTLING -> COMPLETED / CANCELLED` với thông báo mốc `30s`, cảnh báo sắp khóa `10s`, hiệu ứng `5s` cuối và khóa sổ tức thì ở `0s` theo DB Timestamp (chỉnh sửa tin nhắn tại chỗ, không spam kênh).
+- **🔄 AUTO NEXT ROUND SYSTEM (Tự Động Mở Phiên Tiếp Theo):**
+  - Mặc định **BẬT** cho **Bầu Cua (`60s`)** & **Tài Xỉu (`60s`)** với **thời gian nghỉ `10 giây`** sau khi hoàn tất thanh toán (`COMPLETED`).
+  - Bảng kết quả hiển thị đầy đủ danh sách thắng/thua, tổng tiền thanh toán, thông báo **`"PHIÊN TIẾP THEO SẮP BẮT ĐẦU"`**, thời gian nghỉ còn lại và `Round ID` mới khi phiên kế tiếp khởi chạy mà không spam tin nhắn trong kênh.
+  - Khóa nguyên tử CAS (`auto_next_state`) + SQLite Partial Unique Index (`idx_mp_unique_active_table`) + khóa khôi phục (`_isRecovering`) bảo đảm **không bao giờ tạo trùng phiên** kể cả khi nhiều thành viên bấm `START` cùng lúc, Bot restart giữa lúc nghỉ, hay hai tiến trình chạy song song.
+  - Lệnh quản lý: `/game auto status` (xem trạng thái) và các lệnh cấu hình dành riêng cho **ADMIN / OWNER**: `/game auto on`, `/game auto off` *(chỉ dừng lịch mở tự động tiếp theo, không hủy phiên đang nhận cược)*, `/game auto delay <so_giay>`.
 - **Ma Trận Phân Quyền `/game` Rõ Ràng:**
   - **Mọi Thành Viên + ADMIN + OWNER:** `/game start`, đặt cược nhiều cửa, xem `/game status`, `/game history`, xem/sửa/hủy vé cược cá nhân khi phiên đang `BETTING` (theo cấu hình), xem biên lai & BXH phiên.
   - **Chỉ ADMIN / OWNER:** `/game stop` (hủy phiên khẩn cấp & hoàn tiền **100%** chống hoàn đúp + ghi `audit_logs`), `/game extend` (gia hạn thời gian đếm ngược), `/game settings` (chỉnh thời gian mở cược & hạn mức tối thiểu/tối đa).
@@ -45,6 +50,6 @@ Tối ưu hóa chuyên biệt cho gói **FREE trên `botkeep.cloud`** (`512 MB R
 
 ```bash
 npm install
-npm run check   # Kiểm tra cú pháp 81 tệp .js, 50 ES Modules, 39 Slash Commands (<4000 chars), OWNER ID & quét chống lộ Token
-npm test        # Chạy toàn bộ 49 bài kiểm thử tự động trên 18 bộ test (bao gồm Multiplayer Public Start, ACID Concurrency, Restart Recovery & Components V2)
+npm run check   # Kiểm tra cú pháp 82 tệp .js, 50 ES Modules, 39 Slash Commands (<4000 chars), OWNER ID & quét chống lộ Token
+npm test        # Chạy toàn bộ 54 bài kiểm thử tự động trên 19 bộ test (bao gồm Auto Next Round, Public Start, ACID Concurrency, Restart Recovery & Components V2)
 ```

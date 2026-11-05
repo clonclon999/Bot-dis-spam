@@ -308,6 +308,10 @@ CREATE TABLE IF NOT EXISTS multiplayer_rounds (
   notified_30s INTEGER NOT NULL DEFAULT 0 CHECK(notified_30s IN (0, 1)),
   notified_10s INTEGER NOT NULL DEFAULT 0 CHECK(notified_10s IN (0, 1)),
   notified_5s INTEGER NOT NULL DEFAULT 0 CHECK(notified_5s IN (0, 1)),
+  auto_next_state TEXT NOT NULL DEFAULT 'NONE',
+  next_round_at INTEGER DEFAULT NULL,
+  next_round_id TEXT DEFAULT NULL,
+  prev_round_id TEXT DEFAULT NULL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -316,6 +320,11 @@ CREATE INDEX IF NOT EXISTS idx_mp_rounds_active
   ON multiplayer_rounds (guild_id, game_id, status);
 CREATE INDEX IF NOT EXISTS idx_mp_rounds_history
   ON multiplayer_rounds (guild_id, game_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mp_rounds_autonext
+  ON multiplayer_rounds (auto_next_state, next_round_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mp_unique_active_table
+  ON multiplayer_rounds (guild_id, game_id, table_index)
+  WHERE status IN ('WAITING', 'BETTING', 'LOCKED', 'DRAWING', 'SETTLING');
 
 -- 18. Danh Sách Vé Cược Cá Nhân Của Từng Phiên Chung (ACID + Chống Trả Thưởng/Hoàn Tiền Kép)
 CREATE TABLE IF NOT EXISTS multiplayer_bets (

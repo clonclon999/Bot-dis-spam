@@ -74,6 +74,17 @@ export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
   mpMaxTablesPerGame: 3,
   mpTaixiuTripleRule: 'house_wins', // Công bố trước phiên: Tổng 3 hoặc 18 = Nhà cái thắng
 
+  // Hệ Thống Tự Động Mở Phiên Tiếp Theo (Auto Next Round System)
+  mpAutoNextEnabled: true, // Mặc định: BẬT
+  mpAutoNextDelaySec: 10, // Mặc định: Nghỉ 10 giây giữa hai phiên
+  mpAutoNextGames: {
+    baucua: true, // Mặc định áp dụng cho Bầu Cua
+    taixiu: true, // Mặc định áp dụng cho Tài Xỉu
+    race: false, // OWNER/ADMIN có thể bật thêm cho Đua Thú
+  },
+  mpAutoNextOnCancelled: false, // Mặc định không tự mở lại khi phiên bị CANCELLED (trừ khi ADMIN bật)
+  mpAutoNextGuildOverrides: {}, // Ghi đè cấu hình Auto Next riêng theo từng Guild (nếu có)
+
   // Kênh log chuyên biệt
   logChannels: {
     economy: null,

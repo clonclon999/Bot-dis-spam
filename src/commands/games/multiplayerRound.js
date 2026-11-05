@@ -194,6 +194,42 @@ function buildQuickChipSelectRow(roundId, disabled = false) {
   return new ActionRowBuilder().addComponents(select);
 }
 
+function formatStarterDisplay(round) {
+  if (!round?.started_by || round.started_by === 'SYSTEM_AUTO') {
+    return '🤖 **Hệ Thống Tự Động (Auto Next)**';
+  }
+  const tag = `<@${round.started_by}>`;
+  return round.started_by_name && round.started_by_name !== round.started_by
+    ? `${tag} (\`${round.started_by_name}\`)`
+    : tag;
+}
+
+function buildAutoNextStatusLines(round) {
+  if (round.auto_next_state === 'PENDING' && round.next_round_at) {
+    const nextUnix = Math.floor(Number(round.next_round_at) / 1000);
+    const remSec = Math.max(0, Math.ceil((Number(round.next_round_at) - Date.now()) / 1000));
+    const lines = [
+      '',
+      '⏳ **PHIÊN TIẾP THEO SẮP BẮT ĐẦU**',
+      `• 🕒 **Thời gian còn lại trước khi mở phiên mới:** <t:${nextUnix}:R> *(~${remSec} giây)*`,
+    ];
+    if (round.next_round_id) {
+      lines.push(`• 🆔 **Round ID tiếp theo:** \`#${round.next_round_id}\``);
+    }
+    return lines.join('\n');
+  }
+
+  if (round.next_round_id) {
+    return [
+      '',
+      '🚀 **PHIÊN TIẾP THEO ĐÃ ĐƯỢC MỞ:**',
+      `• 🆔 **Round ID tiếp theo:** \`#${round.next_round_id}\` — *Đang nhận đặt cược!*`,
+    ].join('\n');
+  }
+
+  return '';
+}
+
 /**
  * Kết xuất Bảng Phiên Chung Discord Components V2 (tự động thích ứng theo trạng thái vòng đời):
  * - `WAITING` / `BETTING`: Bảng 11 phần tử tối ưu Mobile (Mục 12) + mốc cảnh báo 30s / 10s / 5s.
@@ -246,7 +282,7 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
         textDisplay(
           [
             `## ${gameMeta.emoji} PHIÊN ${gameMeta.title} — \`#${round.round_id}\``,
-            `👤 **Người khởi tạo phiên:** <@${round.started_by}> (\`${round.started_by_name || round.started_by}\`)`,
+            `👤 **Người khởi tạo phiên:** ${formatStarterDisplay(round)}${round.prev_round_id ? `  •  ⏮️ **Phiên trước:** \`#${round.prev_round_id}\`` : ''}`,
             `⏱️ **ĐỒNG HỒ ĐẾM NGƯỢC:** **<t:${endsUnix}:R>** *(Khóa sổ lúc <t:${endsUnix}:T> • Tổng ${round.duration_sec}s)*`,
             countdownHeadline,
           ].join('\n')
@@ -327,7 +363,7 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
           [
             `## 🎰 ${gameMeta.title} — \`#${round.round_id}\``,
             `🔒 **TRẠNG THÁI:** \`${round.status}\` — **ĐÃ KHÓA SỔ NHẬN CƯỢC & ĐANG QUAY KẾT QUẢ CHUNG!**`,
-            `👤 **Người mở phiên:** <@${round.started_by}>  •  👥 **Tham gia:** **${round.total_players} người**  •  💰 **Tổng quỹ cược:** **${formatVnd(round.total_bet_vnd)}**`,
+            `👤 **Người mở phiên:** ${formatStarterDisplay(round)}  •  👥 **Tham gia:** **${round.total_players} người**  •  💰 **Tổng quỹ cược:** **${formatVnd(round.total_bet_vnd)}**`,
             '',
             buildDoorSummaryLines(round.game_id, doorStats),
             '',
@@ -365,7 +401,10 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
             `📝 **Lý do:** ${round.cancel_reason || 'Quản trị viên dừng phiên'}`,
             `💸 **Hoàn trả tự động:** Đã hoàn **100%** tiền cược về ví cho toàn bộ người tham gia (**${round.total_players} người** • **${formatVnd(round.total_bet_vnd)}**).`,
             `🕒 **Thời điểm hủy:** <t:${endedUnix}:F> (<t:${endedUnix}:R>)`,
-          ].join('\n')
+            buildAutoNextStatusLines(round),
+          ]
+            .filter(Boolean)
+            .join('\n')
         ),
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()
@@ -500,7 +539,7 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
     textDisplay(
       [
         `## 🏆 KẾT QUẢ PHIÊN ${gameMeta.title} — \`#${round.round_id}\``,
-        `👤 **Người mở phiên:** <@${round.started_by}>  •  🕒 **Kết thúc:** <t:${completedUnix}:F> (<t:${completedUnix}:R>)`,
+        `👤 **Người mở phiên:** ${formatStarterDisplay(round)}  •  🕒 **Kết thúc:** <t:${completedUnix}:F> (<t:${completedUnix}:R>)`,
         resultHeadline,
       ].join('\n')
     ),
@@ -510,6 +549,7 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
     resChildren.push(mediaGallery(rollGallery.items));
   }
 
+  const autoNextBlock = buildAutoNextStatusLines(round);
   resChildren.push(
     separator({ divider: true }),
     textDisplay(
@@ -517,14 +557,15 @@ export function buildMultiplayerBoardPayload(snapshot, systems, meta = {}) {
         `📊 **THỐNG KÊ TỔNG KẾT PHIÊN \`#${round.round_id}\`:**`,
         `• 👥 **Tổng số người chơi:** **${round.total_players} người**`,
         `• 💰 **Tổng tiền cược:** **${formatVnd(round.total_bet_vnd)}**`,
-        `• 🟢 **Tổng tiền thắng (lãi ròng):** **+${formatVnd(round.total_won_vnd)}** *(Tổng chi trả: ${formatVnd(round.total_payout_vnd)})*`,
-        `• 🔴 **Tổng tiền thua:** **-${formatVnd(round.total_lost_vnd)}**`,
+        `• 💳 **Tổng tiền thanh toán:** **${formatVnd(round.total_payout_vnd)}**`,
+        `• 🟢 **Tổng tiền thắng (lãi ròng):** **+${formatVnd(round.total_won_vnd)}**  •  🔴 **Tổng tiền thua:** **-${formatVnd(round.total_lost_vnd)}**`,
         '',
         `🏅 **DANH SÁCH NGƯỜI THẮNG (${winners.length}):**`,
         winnersText,
         '',
         `📉 **DANH SÁCH NGƯỜI THUA / HÒA (${losers.length + breakEven.length}):**`,
         losersText,
+        ...(autoNextBlock ? [autoNextBlock] : []),
       ].join('\n')
     ),
     separator({ divider: false }),
@@ -1003,10 +1044,218 @@ export const gameMultiplayerCommand = {
             .setName('multi_table')
             .setDescription('[CHỈ OWNER] Bật/tắt chế độ mở nhiều bàn cược cùng lúc')
         )
+    )
+    .addSubcommandGroup((grp) =>
+      grp
+        .setName('auto')
+        .setDescription('Quản lý tự động mở phiên tiếp theo (Auto Next Round)')
+        .addSubcommand((sub) =>
+          sub.setName('status').setDescription('Xem trạng thái Auto Next Round hiện tại')
+        )
+        .addSubcommand((sub) =>
+          sub
+            .setName('on')
+            .setDescription('[ADMIN/OWNER] Bật tự động mở phiên tiếp theo')
+            .addStringOption((opt) =>
+              opt
+                .setName('tro_choi')
+                .setDescription('Áp dụng cho trò cụ thể (bỏ trống = bật chung)')
+                .addChoices(
+                  { name: '🦀 Bầu Cua 3D', value: GAME_IDS.BAUCUA },
+                  { name: '🎲 Tài Xỉu 3D', value: GAME_IDS.TAIXIU },
+                  { name: '🏇 Đua Thú 3D', value: GAME_IDS.RACE }
+                )
+            )
+            .addBooleanOption((opt) =>
+              opt
+                .setName('khi_huy_phien')
+                .setDescription('Cho phép tự mở phiên mới sau khi phiên trước bị CANCELLED')
+            )
+        )
+        .addSubcommand((sub) =>
+          sub
+            .setName('off')
+            .setDescription('[ADMIN/OWNER] Tắt tự động mở phiên tiếp theo')
+            .addStringOption((opt) =>
+              opt
+                .setName('tro_choi')
+                .setDescription('Tắt riêng cho trò cụ thể (bỏ trống = tắt chung)')
+                .addChoices(
+                  { name: '🦀 Bầu Cua 3D', value: GAME_IDS.BAUCUA },
+                  { name: '🎲 Tài Xỉu 3D', value: GAME_IDS.TAIXIU },
+                  { name: '🏇 Đua Thú 3D', value: GAME_IDS.RACE }
+                )
+            )
+        )
+        .addSubcommand((sub) =>
+          sub
+            .setName('delay')
+            .setDescription('[ADMIN/OWNER] Đổi thời gian nghỉ giữa hai phiên')
+            .addIntegerOption((opt) =>
+              opt
+                .setName('so_giay')
+                .setDescription('Số giây nghỉ trước khi mở phiên mới (1 – 600 giây)')
+                .setRequired(true)
+                .setMinValue(1)
+                .setMaxValue(600)
+            )
+        )
     ),
 
   async execute(interaction, systems) {
+    const group = interaction.options?.getSubcommandGroup?.(false) ?? null;
     const sub = interaction.options.getSubcommand();
+
+    // NHÓM LỆNH `/game auto status | on | off | delay`
+    if (group === 'auto') {
+      if (sub === 'status') {
+        const cfg = systems.multiplayerRoundSystem.getAutoNextConfig(interaction.guildId);
+        const durations = systems.multiplayerRoundSystem.getSettingsSummary(interaction.guildId).durations;
+        const pending = systems.multiplayerRoundSystem.getPendingAutoNextRounds(interaction.guildId);
+        const pendingLines =
+          pending.length > 0
+            ? pending.map((r) => {
+                const nextUnix = Math.floor(Number(r.next_round_at) / 1000);
+                return `• Phiên vừa xong \`#${r.round_id}\` (${r.game_id.toUpperCase()}) ➡️ Mở phiên kế tiếp <t:${nextUnix}:R>`;
+              })
+            : ['_Hiện không có phiên nào đang trong thời gian nghỉ chờ mở vòng mới._'];
+
+        await safeReplyV2(
+          interaction,
+          buildCv2NoticePayload({
+            title: '🔄 Trạng Thái Auto Next Round (Tự Động Mở Phiên)',
+            body: [
+              `• ⚡ **Tự động mở phiên tiếp theo:** **${cfg.enabled ? '🟢 ĐANG BẬT' : '🔴 ĐANG TẮT'}**`,
+              `• ⏳ **Thời gian nghỉ giữa hai phiên:** **${cfg.delaySec} giây**`,
+              `• 🦀 **Bầu Cua (${durations.baucua}s cược):** \`${cfg.games.baucua ? 'BẬT' : 'TẮT'}\``,
+              `• 🎲 **Tài Xỉu (${durations.taixiu}s cược):** \`${cfg.games.taixiu ? 'BẬT' : 'TẮT'}\``,
+              `• 🏇 **Đua Thú (${durations.race}s cược):** \`${cfg.games.race ? 'BẬT' : 'TẮT'}\``,
+              `• 🛑 **Tự mở lại sau khi hủy phiên (CANCELLED):** \`${cfg.allowOnCancelled ? 'CHO PHÉP' : 'KHÔNG'}\``,
+              '',
+              '📡 **Lịch chờ mở phiên tiếp theo:**',
+              ...pendingLines,
+            ].join('\n'),
+            accentColor: cfg.enabled ? THEME.CYBER_EMERALD : THEME.AMBER_PULSE,
+            ephemeral: true,
+          })
+        );
+        return;
+      }
+
+      // Các lệnh cấu hình `/game auto on | off | delay`: CHỈ OWNER / ADMIN!
+      if (!hasBotRole(systems.db, interaction.user.id, BOT_ROLES.ADMIN)) {
+        await safeReplyV2(
+          interaction,
+          buildCv2NoticePayload({
+            title: '⛔ Không Đủ Quyền Cấu Hình',
+            body: 'Chỉ **ADMIN** hoặc **OWNER** mới được sử dụng các lệnh cấu hình Auto Next Round (`/game auto on | off | delay`)!',
+            accentColor: THEME.CRIMSON_NEON,
+            ephemeral: true,
+          })
+        );
+        return;
+      }
+
+      if (sub === 'on') {
+        const gameId = interaction.options?.getString?.('tro_choi') || null;
+        const onCancelled = interaction.options?.getBoolean?.('khi_huy_phien') ?? null;
+        const res = await systems.multiplayerRoundSystem.updateAutoNextSettings({
+          guildId: interaction.guildId,
+          actorId: interaction.user.id,
+          enabled: gameId ? null : true,
+          gameId,
+          gameEnabled: gameId ? true : null,
+          allowOnCancelled: onCancelled,
+        });
+        if (!res.ok) {
+          await safeReplyV2(
+            interaction,
+            buildCv2NoticePayload({
+              title: '⚠️ Không Thể Bật Auto Next',
+              body: res.error,
+              accentColor: THEME.CRIMSON_NEON,
+              ephemeral: true,
+            })
+          );
+          return;
+        }
+        const cfg = res.config;
+        await safeReplyV2(
+          interaction,
+          buildCv2NoticePayload({
+            title: '🟢 Đã Bật Auto Next Round',
+            body: [
+              `✅ **Đã cập nhật:** ${res.changes.join(' • ')}`,
+              `• ⚡ **Trạng thái chung:** \`${cfg.enabled ? 'BẬT' : 'TẮT'}\`  •  ⏳ **Thời gian nghỉ:** \`${cfg.delaySec}s\``,
+              `• 🎮 **Trò áp dụng:** Bầu Cua \`${cfg.games.baucua ? 'BẬT' : 'TẮT'}\` • Tài Xỉu \`${cfg.games.taixiu ? 'BẬT' : 'TẮT'}\` • Đua Thú \`${cfg.games.race ? 'BẬT' : 'TẮT'}\``,
+            ].join('\n'),
+            accentColor: THEME.CYBER_EMERALD,
+            ephemeral: true,
+          })
+        );
+        return;
+      }
+
+      if (sub === 'off') {
+        const gameId = interaction.options?.getString?.('tro_choi') || null;
+        const res = await systems.multiplayerRoundSystem.updateAutoNextSettings({
+          guildId: interaction.guildId,
+          actorId: interaction.user.id,
+          enabled: gameId ? null : false,
+          gameId,
+          gameEnabled: gameId ? false : null,
+        });
+        if (!res.ok) {
+          await safeReplyV2(
+            interaction,
+            buildCv2NoticePayload({
+              title: '⚠️ Không Thể Tắt Auto Next',
+              body: res.error,
+              accentColor: THEME.CRIMSON_NEON,
+              ephemeral: true,
+            })
+          );
+          return;
+        }
+        await safeReplyV2(
+          interaction,
+          buildCv2NoticePayload({
+            title: '🔴 Đã Tắt Auto Next Round',
+            body: [
+              `✅ **Đã cập nhật:** ${res.changes.join(' • ')}`,
+              res.cancelledPendingIds.length > 0
+                ? `⏹️ Đã hủy lịch chờ mở phiên tiếp theo của: ${res.cancelledPendingIds.map((id) => `\`#${id}\``).join(', ')}.`
+                : 'ℹ️ Các phiên đang nhận cược (`BETTING`) vẫn tiếp tục hoạt động bình thường.',
+              '👉 Thành viên vẫn có thể dùng `/game start` để mở phiên mới thủ công bất kỳ lúc nào!',
+            ].join('\n'),
+            accentColor: THEME.AMBER_PULSE,
+            ephemeral: true,
+          })
+        );
+        return;
+      }
+
+      if (sub === 'delay') {
+        const sec = interaction.options.getInteger('so_giay', true);
+        const res = await systems.multiplayerRoundSystem.updateAutoNextSettings({
+          guildId: interaction.guildId,
+          actorId: interaction.user.id,
+          delaySec: sec,
+        });
+        await safeReplyV2(
+          interaction,
+          buildCv2NoticePayload({
+            title: res.ok ? '⏳ Đã Cập Nhật Thời Gian Nghỉ Giữa Hai Phiên' : '⛔ Lỗi Cấu Hình',
+            body: res.ok
+              ? `✅ Thời gian nghỉ chờ trước khi tự động mở phiên mới hiện là **${res.config.delaySec} giây**!`
+              : res.error,
+            accentColor: res.ok ? THEME.CYBER_EMERALD : THEME.CRIMSON_NEON,
+            ephemeral: true,
+          })
+        );
+        return;
+      }
+    }
 
     // 1. PUBLIC START — TẤT CẢ THÀNH VIÊN ĐỀU SỬ DỤNG ĐƯỢC!
     if (sub === 'start') {

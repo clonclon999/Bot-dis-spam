@@ -93,12 +93,25 @@ export class GameDatabase {
           ['notified_5s', 'INTEGER NOT NULL DEFAULT 0'],
           ['total_won_vnd', 'INTEGER NOT NULL DEFAULT 0'],
           ['total_lost_vnd', 'INTEGER NOT NULL DEFAULT 0'],
+          ['auto_next_state', "TEXT NOT NULL DEFAULT 'NONE'"],
+          ['next_round_at', 'INTEGER DEFAULT NULL'],
+          ['next_round_id', 'TEXT DEFAULT NULL'],
+          ['prev_round_id', 'TEXT DEFAULT NULL'],
         ];
         for (const [col, def] of alterDefs) {
           if (!colNames.has(col)) {
             this.db.run(`ALTER TABLE multiplayer_rounds ADD COLUMN ${col} ${def}`);
           }
         }
+        this.db.run(
+          `CREATE INDEX IF NOT EXISTS idx_mp_rounds_autonext
+           ON multiplayer_rounds (auto_next_state, next_round_at)`
+        );
+        this.db.run(
+          `CREATE UNIQUE INDEX IF NOT EXISTS idx_mp_unique_active_table
+           ON multiplayer_rounds (guild_id, game_id, table_index)
+           WHERE status IN ('WAITING', 'BETTING', 'LOCKED', 'DRAWING', 'SETTLING')`
+        );
       }
     } catch {
       // Bỏ qua nếu cột đã tồn tại

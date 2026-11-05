@@ -65,6 +65,7 @@ const HELP_CATEGORIES = {
     body: [
       '• `/game start <tro_choi>` — **Mở Phiên Cược Chung Toàn Server (Public Start — Mọi thành viên đều mở được!)** cho Bầu Cua (`60s`), Tài Xỉu (`60s`) & Đua Thú (`90s`).',
       '• `/game status` • `/game history` — Xem phiên đang chạy & lịch sử kết quả phiên chung.',
+      '• `/game auto status | on | off | delay` — Tự động mở phiên tiếp theo sau 10s nghỉ *(ADMIN/OWNER cấu hình)*.',
       '• `/game stop` • `/game extend` • `/game settings` — *(ADMIN/OWNER)* Dừng phiên hoàn tiền 100%, gia hạn đếm ngược & chỉnh cấu hình.',
       '• `/games` — **Mở ứng dụng Game Center PRO MAX** (7 khu vực: Trang chủ, Danh sách game, Ví tiền, Nhiệm vụ, Cửa hàng, Hồ sơ & Bảng xếp hạng).',
       '• `/baucua` — **Bầu Cua 3D PRO MAX** (lưới MediaGallery 6 linh vật 3D, đặt riêng từng cửa, thưởng **2x / 3x / 4x**).',

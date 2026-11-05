@@ -113,5 +113,59 @@ export async function createBotSystems(dataDir) {
     await msg.edit(payload);
   });
 
+  multiplayerRoundSystem.setAutoStartBoardPublisher(async (newSnapshot, prevRound, prevMsg) => {
+    const hadPlayers = Number(prevRound?.total_players) > 0;
+
+    // Nếu phiên trước CÓ người đặt cược và có kênh gửi tin nhắn thực:
+    // 1) Cập nhật bảng kết quả phiên trước để ghi nhận Round ID tiếp theo vừa tạo
+    // 2) Đăng 1 bảng phiên mới duy nhất ở cuối kênh (không spam tin nhắn đếm ngược!)
+    if (hadPlayers && prevRound?.round_id) {
+      await multiplayerRoundSystem._renderBoardNow(prevRound.round_id, {
+        phase: 'AUTO_NEXT_LINKED',
+      });
+    }
+
+    const client = multiplayerRoundSystem.client;
+    const channelId = newSnapshot.round.channel_id;
+    let targetChannel = null;
+    if (client && channelId) {
+      targetChannel =
+        client.channels?.cache?.get(channelId) ||
+        (await client.channels?.fetch?.(channelId).catch(() => null));
+    }
+
+    if (hadPlayers && targetChannel && typeof targetChannel.send === 'function') {
+      const freshPayload = buildMultiplayerBoardPayload(newSnapshot, systems, {
+        isEdit: false,
+      });
+      const sentMsg = await targetChannel.send(freshPayload);
+      if (sentMsg) {
+        multiplayerRoundSystem.registerMessageRef(newSnapshot.round.round_id, sentMsg);
+      }
+      return;
+    }
+
+    // Nếu phiên trước 0 người chơi (hoặc môi trường chỉ chỉnh sửa tại chỗ):
+    // Tái sử dụng ngay cùng 1 bảng tin nhắn để cập nhật Round ID mới, đồng hồ mới & mở lại nút cược (0 spam tuyệt đối!)
+    if (prevMsg && typeof prevMsg.edit === 'function') {
+      const editPayload = buildMultiplayerBoardPayload(newSnapshot, systems, {
+        isEdit: true,
+      });
+      await prevMsg.edit(editPayload);
+      multiplayerRoundSystem.registerMessageRef(newSnapshot.round.round_id, prevMsg);
+      return;
+    }
+
+    if (targetChannel && typeof targetChannel.send === 'function') {
+      const freshPayload = buildMultiplayerBoardPayload(newSnapshot, systems, {
+        isEdit: false,
+      });
+      const sentMsg = await targetChannel.send(freshPayload);
+      if (sentMsg) {
+        multiplayerRoundSystem.registerMessageRef(newSnapshot.round.round_id, sentMsg);
+      }
+    }
+  });
+
   return systems;
 }
