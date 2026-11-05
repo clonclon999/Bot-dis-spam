@@ -23,8 +23,8 @@ export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
   questRewardMultiplier: 1.0,
   gamePayoutMultiplier: 1.0,
 
-  // Giới hạn cược
-  minBet: 1_000,
+  // Giới hạn cược (hỗ trợ đầy đủ nút chọn nhanh 100 VNĐ -> Tất cả)
+  minBet: 100,
   maxBet: 5_000_000,
 
   // Ngân hàng
@@ -35,8 +35,9 @@ export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
   minLevelForBank: 1,
   minDepositForSavings: 50_000,
 
-  // Cướp & Truy nã
-  robCooldownSec: 600, // 10 phút
+  // Cướp & Truy nã (kèm chống farm cướp lặp lại cùng 1 nạn nhân)
+  robCooldownSec: 600, // 10 phút giữa các lượt cướp
+  robSameTargetCooldownSec: 3600, // 60 phút không được cướp lặp lại cùng 1 nạn nhân
   robSuccessRatePct: 40, // 40%
   robMaxStealPct: 15, // Cướp tối đa 15% tiền mặt nạn nhân
   robMaxCap: 250_000, // Trần cướp tối đa 1 lần

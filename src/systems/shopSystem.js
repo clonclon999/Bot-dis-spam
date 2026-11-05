@@ -240,6 +240,17 @@ export class ShopSystem {
           };
         }
 
+        case 'pet_egg': {
+          const r = secureInt(1, 100);
+          const speciesId = r <= 45 ? 'dog_shiba' : r <= 78 ? 'cat_fortune' : r <= 95 ? 'fox_snow' : 'dragon_jade';
+          const pet = this.petSystem.grantPetDirect(userId, speciesId, now);
+          const sp = PET_SPECIES[speciesId];
+          return {
+            item,
+            effectMessage: `🥚 Trứng Thú Cưng đã nở thành **${sp.emoji} ${pet.nickname} (${sp.rarity})**! Kiểm tra ngay tại \`/pet\`.`,
+          };
+        }
+
         case 'mystery_box': {
           const roll = secureInt(1, 100);
           // 8% cơ hội trúng Thú Hiếm Kỳ Lân Tinh Tú!

@@ -35,6 +35,21 @@ export const GAME_IDS = Object.freeze({
   NOITU: 'noitu',
 });
 
+/**
+ * Thứ tự 7 trò chơi chính thức trong Game Center (/games) — TUYỆT ĐỐI KHÔNG CÓ ĐẤU BOSS.
+ */
+export const OFFICIAL_GAME_ORDER = Object.freeze([
+  GAME_IDS.BAUCUA,
+  GAME_IDS.TAIXIU,
+  GAME_IDS.NOITU,
+  GAME_IDS.RPS,
+  GAME_IDS.GUESS,
+  GAME_IDS.COINFLIP,
+  GAME_IDS.RACE,
+]);
+
+export const QUICK_BET_AMOUNTS = Object.freeze([100, 500, 1_000, 5_000, 10_000]);
+
 export const GAME_LABELS = Object.freeze({
   [GAME_IDS.BAUCUA]: '🎲 Bầu Cua',
   [GAME_IDS.TAIXIU]: '🎯 Tài Xỉu',
@@ -43,6 +58,92 @@ export const GAME_LABELS = Object.freeze({
   [GAME_IDS.RACE]: '🏇 Đua Thú',
   [GAME_IDS.RPS]: '✂️ Oẳn Tù Tì',
   [GAME_IDS.NOITU]: '🔤 Nối Từ Tiếng Việt',
+});
+
+export const GAME_CATALOG = Object.freeze({
+  baucua: Object.freeze({
+    id: 'baucua',
+    name: 'Bầu Cua Tôm Cá',
+    emoji: '🦀',
+    command: '/baucua',
+    shortDesc: 'Đặt cược bàn lưới 6 linh vật dân gian, lắc 3 viên xúc xắc nhận thưởng 2x / 3x / 4x.',
+    rules: [
+      '• Chọn 1 hoặc nhiều linh vật trên bàn 6 cửa (`Bầu, Cua, Tôm, Cá, Gà, Nai`), có thể đặt tiền riêng cho từng linh vật.',
+      '• Hệ thống khóa kết quả an toàn (`crypto.randomInt`) rồi chạy hiệu ứng lắc 3 xúc xắc.',
+      '• **Thanh toán:** Xuất hiện **1 lần** nhận lại **2x** tiền cược | **2 lần** nhận lại **3x** | **3 lần** nhận lại **4x** | **0 lần** mất tiền cược.',
+    ].join('\n'),
+  }),
+  taixiu: Object.freeze({
+    id: 'taixiu',
+    name: 'Tài Xỉu Casino',
+    emoji: '🎲',
+    command: '/taixiu',
+    shortDesc: 'Sòng Casino hai khu vực TÀI (11–17) & XỈU (4–10) kèm hiệu ứng tung 3 xúc xắc.',
+    rules: [
+      '• Chọn khu vực **TÀI (11–17)** hoặc **XỈU (4–10)** và bấm **Xác nhận** mức cược VNĐ.',
+      '• **Quy tắc:** Tổng **4–10** là **Xỉu** | Tổng **11–17** là **Tài** | Tổng **3 hoặc 18** là **Nhà cái thắng**.',
+      '• **Thanh toán:** Thắng nhận lại **2 lần (2x)** tiền cược; thua mất tiền cược.',
+    ].join('\n'),
+  }),
+  noitu: Object.freeze({
+    id: 'noitu',
+    name: 'Nối Từ Tiếng Việt (Game Show 1v1)',
+    emoji: '🔤',
+    command: '/noitu',
+    shortDesc: 'Game Show đối kháng 2 người chơi với đồng hồ đếm ngược 30 giây và từ điển nội bộ tốc độ cao.',
+    rules: [
+      '• Hai người chơi đối đầu trực tiếp trong phòng riêng, hiển thị Avatar, thanh lượt chơi và lịch sử từ đã dùng.',
+      '• Nhập từ ghép tiếng Việt 2 tiếng hợp lệ bắt đầu bằng tiếng cuối của từ hiện tại trong vòng **30 giây**.',
+      '• Không được dùng lại từ đã xuất hiện; nếu đối thủ hết giờ hoặc từ khóa cuối không còn từ nối tiếp trong từ điển, bạn **Thắng Tuyệt Đối**!',
+    ].join('\n'),
+  }),
+  rps: Object.freeze({
+    id: 'rps',
+    name: 'Oẳn Tù Tì',
+    emoji: '✂️',
+    command: '/rps',
+    shortDesc: 'Đối đầu Kéo • Búa • Bao cùng Bot hoặc thách đấu người chơi khác với hiệu ứng đếm ngược mở kết quả.',
+    rules: [
+      '• Quy tắc: **Búa** thắng **Kéo**, **Kéo** thắng **Bao**, **Bao** thắng **Búa**.',
+      '• Hỗ trợ cả đấu với **Bot** và thách đấu **Người chơi (PvP)** cược VNĐ trực tiếp.',
+      '• Sau khi xác nhận cược, hệ thống chạy đếm ngược và mở kết quả đồng thời (thắng nhận **2x**, hòa hoàn tiền).',
+    ].join('\n'),
+  }),
+  guess: Object.freeze({
+    id: 'guess',
+    name: 'Đoán Số Bí Ẩn',
+    emoji: '🔢',
+    command: '/guess',
+    shortDesc: 'Giải mã con số ngẫu nhiên của Bot với giới hạn lượt đoán và gợi ý Lớn Hơn / Nhỏ Hơn.',
+    rules: [
+      '• Chọn độ khó và xác nhận mức cược VNĐ để Bot khởi tạo con số bí mật ngẫu nhiên.',
+      '• Bạn có số lượt đoán giới hạn; mỗi lần đoán chưa trúng, Bot sẽ gợi ý con số bí mật **LỚN HƠN** hay **NHỎ HƠN**.',
+      '• Đoán đúng trong giới hạn lượt sẽ chạy hiệu ứng mở két và trả thưởng VNĐ tự động!',
+    ].join('\n'),
+  }),
+  coinflip: Object.freeze({
+    id: 'coinflip',
+    name: 'Tung Đồng Xu',
+    emoji: '🪙',
+    command: '/coinflip',
+    shortDesc: 'Chọn mặt Sấp hoặc Ngửa với hiệu ứng xoay đồng xu Hoàng Kim nhận thưởng 2x VNĐ.',
+    rules: [
+      '• Chọn mặt **Sấp** hoặc **Ngửa**, chọn mức cược VNĐ trên bảng cược tương tác và bấm **Xác nhận**.',
+      '• Đồng xu xoay trên không và mở mặt kết quả công bằng 50/50 (thắng nhận lại **2x** tiền cược).',
+    ].join('\n'),
+  }),
+  race: Object.freeze({
+    id: 'race',
+    name: 'Đua Thú Tốc Độ',
+    emoji: '🐎',
+    command: '/race',
+    shortDesc: 'Chọn chiến thú yêu thích và theo dõi đường đua nhiều chặng trực tiếp tới vạch đích.',
+    rules: [
+      '• Chọn 1 trong 5 chiến thú (`Chiến Mã`, `Báo Đốm`, `Đại Bàng`, `Sói Bạc`, `Hổ Trắng`) và xác nhận tiền cược VNĐ.',
+      '• Cuộc đua diễn ra theo từng giai đoạn tăng tốc với thanh tiến trình trực tiếp (không hiện kết quả ngay lập tức).',
+      '• Chiến thú bạn chọn cán đích **Hạng Nhất (#1)** nhận thưởng **4.5x** tiền cược!',
+    ].join('\n'),
+  }),
 });
 
 export const BAUCUA_MASCOTS = Object.freeze([
@@ -124,6 +225,15 @@ export const SHOP_ITEMS = Object.freeze({
     price: 25_000,
     sellPrice: 10_000,
     description: 'Mở ngẫu nhiên nhận từ 10.000–80.000 VNĐ, vật phẩm tăng tốc hoặc mở khóa Thú Hiếm!',
+  }),
+  pet_egg: Object.freeze({
+    id: 'pet_egg',
+    name: 'Trứng Thú Cưng Ngẫu Nhiên',
+    emoji: '🥚',
+    category: 'pet',
+    price: 45_000,
+    sellPrice: 18_000,
+    description: 'Ấp nở ngay 1 Thú Cưng ngẫu nhiên (Shiba, Mèo Thần Tài, Cáo Tuyết hoặc Rồng Ngọc) vào bộ sưu tập!',
   }),
   frame_gold: Object.freeze({
     id: 'frame_gold',
@@ -244,7 +354,17 @@ export const TITLES = Object.freeze({
 });
 
 export const BUILTIN_QUESTS = Object.freeze([
-  // Nhiệm vụ hằng ngày
+  // Nhiệm vụ hằng ngày (đầy đủ Đăng nhập, Đi làm và cả 7 trò chơi chính thức — không có Đấu Boss)
+  Object.freeze({
+    id: 'daily_login_1',
+    scope: 'daily',
+    name: 'Điểm Danh Hằng Ngày',
+    description: 'Đăng nhập nhận thưởng /daily trong ngày',
+    metric: 'daily_claimed',
+    target: 1,
+    rewardVnd: 8_000,
+    rewardExp: 50,
+  }),
   Object.freeze({
     id: 'daily_work_5',
     scope: 'daily',
@@ -276,76 +396,96 @@ export const BUILTIN_QUESTS = Object.freeze([
     rewardExp: 75,
   }),
   Object.freeze({
-    id: 'daily_win_2',
+    id: 'daily_noitu_2',
     scope: 'daily',
-    name: 'Chiến Thắng Đầu Tay',
-    description: 'Thắng 2 trận bất kỳ trong các trò chơi',
-    metric: 'game_wins',
+    name: 'Tranh Tài Nối Từ',
+    description: 'Hoàn thành hoặc thắng 2 trận Nối Từ (/noitu)',
+    metric: 'play_noitu',
     target: 2,
-    rewardVnd: 18_000,
-    rewardExp: 90,
+    rewardVnd: 14_000,
+    rewardExp: 75,
   }),
   Object.freeze({
-    id: 'daily_deposit_1',
+    id: 'daily_rps_3',
     scope: 'daily',
-    name: 'Tích Lũy Tương Lai',
-    description: 'Gửi tiền vào ngân hàng (/deposit) ít nhất 1 lần',
-    metric: 'bank_deposit',
-    target: 1,
-    rewardVnd: 8_000,
-    rewardExp: 50,
+    name: 'Cao Thủ Oẳn Tù Tì',
+    description: 'Chơi 3 ván Oẳn Tù Tì (/rps)',
+    metric: 'play_rps',
+    target: 3,
+    rewardVnd: 11_000,
+    rewardExp: 55,
   }),
   Object.freeze({
-    id: 'daily_chat_5',
+    id: 'daily_guess_2',
     scope: 'daily',
-    name: 'Kết Nối Cộng Đồng',
-    description: 'Tương tác trò chuyện 5 lần trong máy chủ',
-    metric: 'server_chat',
-    target: 5,
+    name: 'Thám Tử Đoán Số',
+    description: 'Chơi 2 ván Đoán Số (/guess)',
+    metric: 'play_guess',
+    target: 2,
+    rewardVnd: 11_000,
+    rewardExp: 60,
+  }),
+  Object.freeze({
+    id: 'daily_coinflip_3',
+    scope: 'daily',
+    name: 'Xoay Xu Thử Vận',
+    description: 'Chơi 3 ván Tung Đồng Xu (/coinflip)',
+    metric: 'play_coinflip',
+    target: 3,
     rewardVnd: 10_000,
+    rewardExp: 55,
+  }),
+  Object.freeze({
+    id: 'daily_race_2',
+    scope: 'daily',
+    name: 'Đường Đua Rực Lửa',
+    description: 'Chơi 2 chặng Đua Thú (/race)',
+    metric: 'play_race',
+    target: 2,
+    rewardVnd: 12_000,
     rewardExp: 65,
   }),
 
   // Nhiệm vụ hằng tuần
   Object.freeze({
-    id: 'weekly_quests_30',
-    scope: 'weekly',
-    name: 'Bậc Thầy Nhiệm Vụ',
-    description: 'Hoàn thành và nhận thưởng 30 nhiệm vụ các loại',
-    metric: 'quests_claimed',
-    target: 30,
-    rewardVnd: 120_000,
-    rewardExp: 500,
-  }),
-  Object.freeze({
     id: 'weekly_games_50',
     scope: 'weekly',
     name: 'Chiến Thần Giải Trí',
-    description: 'Chơi tổng cộng 50 ván trò chơi trong tuần',
+    description: 'Hoàn thành tổng cộng 50 trận trò chơi trong tuần',
     metric: 'games_played',
     target: 50,
     rewardVnd: 100_000,
     rewardExp: 420,
   }),
   Object.freeze({
-    id: 'weekly_levelup_1',
+    id: 'weekly_wins_15',
     scope: 'weekly',
-    name: 'Bứt Phá Cấp Độ',
-    description: 'Tăng thêm ít nhất 1 cấp độ mới trong tuần',
-    metric: 'levels_gained',
-    target: 1,
-    rewardVnd: 60_000,
-    rewardExp: 250,
+    name: 'Chuỗi Thắng Đỉnh Cao',
+    description: 'Thắng tổng cộng 15 trận trò chơi trong tuần',
+    metric: 'game_wins',
+    target: 15,
+    rewardVnd: 90_000,
+    rewardExp: 380,
   }),
   Object.freeze({
     id: 'weekly_earn_50k',
     scope: 'weekly',
     name: 'Nhà Đầu Tư Tuần Lễ',
-    description: 'Kiếm được tổng cộng 50.000 VNĐ từ làm việc & trò chơi',
+    description: 'Tích lũy 50.000 VNĐ từ làm việc & trò chơi trong tuần',
     metric: 'vnd_earned',
     target: 50_000,
     rewardVnd: 55_000,
     rewardExp: 300,
+  }),
+  Object.freeze({
+    id: 'weekly_quests_30',
+    scope: 'weekly',
+    name: 'Bậc Thầy Nhiệm Vụ',
+    description: 'Hoàn thành nhiệm vụ hằng ngày đạt mốc 30 lần nhận thưởng',
+    metric: 'quests_claimed',
+    target: 30,
+    rewardVnd: 120_000,
+    rewardExp: 500,
   }),
 
   // Nhiệm vụ đặc biệt (1 lần cho Tân thủ & Cấp cao)
@@ -380,6 +520,7 @@ export const EVENT_TYPES = Object.freeze({
   LEVEL_RACE: 'level_race',
   BAUCUA_EVENT: 'baucua_event',
   TAIXIU_EVENT: 'taixiu_event',
+  NOITU_EVENT: 'noitu_event',
   QUEST_EVENT: 'quest_event',
   LOGIN_STREAK: 'login_streak',
   GLOBAL_AIRDROP: 'global_airdrop',
@@ -390,6 +531,7 @@ export const EVENT_TYPE_LABELS = Object.freeze({
   [EVENT_TYPES.LEVEL_RACE]: '⭐ Đua Top Cấp Độ',
   [EVENT_TYPES.BAUCUA_EVENT]: '🦀 Sự Kiện Bầu Cua',
   [EVENT_TYPES.TAIXIU_EVENT]: '🎲 Sự Kiện Tài Xỉu',
+  [EVENT_TYPES.NOITU_EVENT]: '🔤 Sự Kiện Nối Từ',
   [EVENT_TYPES.QUEST_EVENT]: '📜 Sự Kiện Nhiệm Vụ',
   [EVENT_TYPES.LOGIN_STREAK]: '📅 Đăng Nhập Liên Tục',
   [EVENT_TYPES.GLOBAL_AIRDROP]: '🎉 Phát Thưởng Toàn Server',

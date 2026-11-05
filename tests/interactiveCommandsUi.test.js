@@ -28,7 +28,7 @@ describe('Interactive UI Commands (Buttons, Select Menus, Modals, Maintenance & 
           amount: 500_000,
         });
 
-        // 1. Mở bàn /baucua -> Chọn 2 linh vật qua Select Menu -> Lắc Bầu Cua bằng Button
+        // 1. Mở bàn hình ảnh /baucua -> Chọn 2 linh vật trên lưới 6 cửa -> Bấm Xác Nhận Lắc Bầu Cua
         let bcReply = null;
         await COMMAND_MAP.get('baucua').execute(
           {
@@ -40,31 +40,40 @@ describe('Interactive UI Commands (Buttons, Select Menus, Modals, Maintenance & 
           },
           systems
         );
-        assert.ok(bcReply.components.length >= 2);
+        assert.equal(bcReply.components.length, 5);
+        assert.equal(bcReply.files.length, 1);
 
         await routeComponentInteraction(
           {
-            customId: 'game:bc_select:u-ui-1',
+            customId: 'vgame:baucua:pick:u-ui-1:bau',
             user: { id: 'u-ui-1', username: 'PlayerUI' },
-            isStringSelectMenu: () => true,
-            values: ['bau', 'cua'],
+            update: async () => {},
+          },
+          systems
+        );
+        await routeComponentInteraction(
+          {
+            customId: 'vgame:baucua:pick:u-ui-1:cua',
+            user: { id: 'u-ui-1', username: 'PlayerUI' },
             update: async () => {},
           },
           systems
         );
 
-        let rolledPanel = null;
+        const bcEdits = [];
         await routeComponentInteraction(
           {
-            customId: 'game:bc_roll:u-ui-1',
+            customId: 'vgame:baucua:confirm:u-ui-1',
             user: { id: 'u-ui-1', username: 'PlayerUI' },
-            update: async (p) => {
-              rolledPanel = p;
+            deferUpdate: async () => {},
+            editReply: async (p) => {
+              bcEdits.push(p);
             },
           },
           systems
         );
-        assert.match(rolledPanel.embeds[0].data.description, /Ván vừa mở/);
+        assert.equal(bcEdits.length, 2); // Bước 1: GIF lắc xúc xắc -> Bước 2: Ảnh 3 xúc xắc thực tế + Bảng thanh toán
+        assert.match(bcEdits[1].embeds[0].data.description, /Bảng Thanh Toán Chi Tiết/);
 
         // 2. Mua nhanh vật phẩm từ Select Menu trên /shop
         let quickBought = null;

@@ -23,8 +23,15 @@ function resolveInteractionGameId(interaction) {
     return ALL_GAME_COMMAND_IDS.has(cmd) ? cmd : null;
   }
   const customId = interaction.customId || '';
-  const prefix = customId.split(':')[0];
-  return ALL_GAME_COMMAND_IDS.has(prefix) ? prefix : null;
+  const parts = customId.split(':');
+  const prefix = parts[0];
+  if (ALL_GAME_COMMAND_IDS.has(prefix)) return prefix;
+  if ((prefix === 'vgame' || prefix === 'vgame_modal') && ALL_GAME_COMMAND_IDS.has(parts[1])) {
+    const action = parts[2];
+    if (action === 'back' || action === 'cancel') return null;
+    return parts[1];
+  }
+  return null;
 }
 
 /**

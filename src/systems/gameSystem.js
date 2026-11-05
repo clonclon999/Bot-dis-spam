@@ -32,6 +32,55 @@ export class GameSystem {
     this.questSystem = questSystem;
     this.eventSystem = eventSystem;
     this.logSystem = logSystem;
+
+    /**
+     * Phiên người chơi đang mở bàn tương tác theo từng trò chơi (`gameId` -> `Map<userId, expiresAt>`).
+     * @type {Map<string, Map<string, number>>}
+     */
+    this.activePlayersByGame = new Map();
+
+    /**
+     * Phiên Đoán Số nhiều lượt có gợi ý Lớn Hơn / Nhỏ Hơn (`userId` -> Session).
+     * @type {Map<string, object>}
+     */
+    this.guessSessions = new Map();
+  }
+
+  touchActivePlayer(gameId, userId, ttlMs = 180_000, now = Date.now()) {
+    if (!gameId || !userId) return;
+    let bucket = this.activePlayersByGame.get(gameId);
+    if (!bucket) {
+      bucket = new Map();
+      this.activePlayersByGame.set(gameId, bucket);
+    }
+    bucket.set(String(userId), now + ttlMs);
+    if (bucket.size > 500) {
+      for (const [uid, exp] of bucket.entries()) {
+        if (exp <= now) bucket.delete(uid);
+      }
+    }
+  }
+
+  releaseActivePlayer(gameId, userId) {
+    if (!gameId || !userId) return;
+    this.activePlayersByGame.get(gameId)?.delete(String(userId));
+  }
+
+  getActivePlayerCount(gameId, now = Date.now()) {
+    const bucket = this.activePlayersByGame.get(gameId);
+    let count = 0;
+    if (bucket) {
+      for (const [uid, exp] of bucket.entries()) {
+        if (exp > now) count += 1;
+        else bucket.delete(uid);
+      }
+    }
+    if (gameId === GAME_IDS.GUESS) {
+      for (const [uid, sess] of this.guessSessions.entries()) {
+        if (sess.expiresAt > now && !bucket?.has(uid)) count += 1;
+      }
+    }
+    return count;
   }
 
   assertGameAllowed(gameId) {
@@ -45,7 +94,7 @@ export class GameSystem {
 
   validateBetAmount(bet) {
     const clean = Math.trunc(Number(bet));
-    const minBet = Number(this.db.getSetting('minBet') ?? 1_000);
+    const minBet = Number(this.db.getSetting('minBet') ?? 100);
     const maxBet = Number(this.db.getSetting('maxBet') ?? 5_000_000);
 
     if (!Number.isSafeInteger(clean) || clean < minBet) {
@@ -132,15 +181,14 @@ export class GameSystem {
         [String(userId), gameId, totalBet, finalPayout, net, wonFlag, detail, now]
       );
 
-      // Cập nhật tiến trình nhiệm vụ & sự kiện
+      // Cập nhật tiến trình nhiệm vụ hằng ngày cho từng trò chơi & sự kiện
       this.questSystem?.incrementMetric(userId, 'games_played', 1, now);
-      if (gameId === GAME_IDS.BAUCUA) {
-        this.questSystem?.incrementMetric(userId, 'play_baucua', 1, now);
-        if (wonFlag) this.eventSystem?.recordProgress(userId, 'baucua_event', 1, now);
+      this.questSystem?.incrementMetric(userId, `play_${gameId}`, 1, now);
+      if (gameId === GAME_IDS.BAUCUA && wonFlag) {
+        this.eventSystem?.recordProgress(userId, 'baucua_event', 1, now);
       }
-      if (gameId === GAME_IDS.TAIXIU) {
-        this.questSystem?.incrementMetric(userId, 'play_taixiu', 1, now);
-        if (wonFlag) this.eventSystem?.recordProgress(userId, 'taixiu_event', 1, now);
+      if (gameId === GAME_IDS.TAIXIU && wonFlag) {
+        this.eventSystem?.recordProgress(userId, 'taixiu_event', 1, now);
       }
       if (wonFlag) {
         this.questSystem?.incrementMetric(userId, 'game_wins', 1, now);
@@ -283,18 +331,19 @@ export class GameSystem {
     const dice = rollDice(3, 6);
     const sum = dice[0] + dice[1] + dice[2];
     const isTriple = dice[0] === dice[1] && dice[1] === dice[2];
+    const isExtremeHouse = sum === 3 || sum === 18;
 
-    // Luật chuẩn Tài Xỉu 3 xúc xắc: Bộ ba đồng nhất (Bão 3..18) nhà cái ăn; 4-10 = Xỉu; 11-17 = Tài
+    // Quy tắc chuẩn: Tổng 4–10 = Xỉu; Tổng 11–17 = Tài; Tổng 3 hoặc 18 = Nhà cái thắng
     let outcome = 'bao';
-    if (!isTriple) {
+    if (!isExtremeHouse) {
       outcome = sum >= 11 ? 'tai' : 'xiu';
     }
 
     const won = outcome === choice;
     const rawPayout = won ? cleanBet * 2 : 0;
     const facesStr = dice.map((d) => `${DICE_FACES[d]}(${d})`).join(' ');
-    const outcomeLabel = isTriple
-      ? `BÃO ${dice[0]} (${sum} điểm)`
+    const outcomeLabel = isExtremeHouse
+      ? `NHÀ CÁI THẮNG (${sum} điểm)`
       : outcome === 'tai'
         ? `TÀI (${sum} điểm)`
         : `XỈU (${sum} điểm)`;
@@ -317,6 +366,7 @@ export class GameSystem {
       diceFaces: dice.map((d) => DICE_FACES[d]),
       sum,
       isTriple,
+      isExtremeHouse,
       outcome,
       outcomeLabel,
     };
@@ -381,8 +431,233 @@ export class GameSystem {
   }
 
   // ==========================================================================
-  // ĐOÁN SỐ (/guess) — Thưởng theo độ khó
+  // ĐOÁN SỐ (/guess) — Hỗ trợ phiên Nhiều Lượt (Gợi ý Lớn Hơn / Nhỏ Hơn) & 1 Lượt
   // ==========================================================================
+
+  getGuessModeConfig(difficulty = 'easy') {
+    const modes = {
+      easy: { id: 'easy', max: 20, maxAttempts: 4, mult: 2.2, label: 'Dễ (1 – 20 • 4 lượt)' },
+      medium: { id: 'medium', max: 50, maxAttempts: 5, mult: 2.8, label: 'Trung bình (1 – 50 • 5 lượt)' },
+      hard: { id: 'hard', max: 100, maxAttempts: 6, mult: 3.5, label: 'Khó (1 – 100 • 6 lượt)' },
+    };
+    return modes[difficulty] ?? modes.easy;
+  }
+
+  getGuessSession(userId, now = Date.now()) {
+    const sess = this.guessSessions.get(String(userId));
+    if (!sess) return null;
+    if (sess.expiresAt <= now) {
+      this.guessSessions.delete(String(userId));
+      return null;
+    }
+    return sess;
+  }
+
+  /**
+   * Khởi tạo phiên Đoán Số nhiều lượt: chỉ trừ tiền cược nguyên tử sau khi người chơi bấm Xác Nhận.
+   */
+  startGuessSession({ userId, username, difficulty = 'easy', bet, secretOverride = null, now = Date.now() }) {
+    this.assertGameAllowed(GAME_IDS.GUESS);
+    const uId = String(userId);
+    const existing = this.getGuessSession(uId, now);
+    if (existing) {
+      throw new Error('Bạn đang có một ván Đoán Số chưa hoàn thành! Hãy đoán tiếp trên bảng hiện tại.');
+    }
+
+    const mode = this.getGuessModeConfig(difficulty);
+    const cleanBet = this.validateBetAmount(bet);
+
+    const walletAfterBet = this.db.transaction(() => {
+      const user = this.economySystem.ensureUser(uId, username, now);
+      this.economySystem.assertCanTransact(user);
+      if (user.wallet < cleanBet) {
+        throw new Error(
+          `Số dư ví không đủ để đặt cược! Cần **${formatVnd(cleanBet)}**, hiện có **${formatVnd(user.wallet)}**.`
+        );
+      }
+      const nextWallet = user.wallet - cleanBet;
+      this.db.run(
+        `UPDATE users
+         SET wallet = ?, total_wagered = total_wagered + ?, updated_at = ?
+         WHERE user_id = ?`,
+        [nextWallet, cleanBet, now, uId]
+      );
+      this.db.run(
+        `INSERT INTO transactions (user_id, type, amount, balance_after, note, created_at)
+         VALUES (?, 'game_bet', ?, ?, ?, ?)`,
+        [uId, -cleanBet, nextWallet, `Đặt cược Đoán Số (${mode.label})`, now]
+      );
+      return nextWallet;
+    });
+
+    const secret =
+      Number.isInteger(secretOverride) && secretOverride >= 1 && secretOverride <= mode.max
+        ? secretOverride
+        : secureInt(1, mode.max);
+
+    const session = {
+      userId: uId,
+      username: String(username || ''),
+      difficulty: mode.id,
+      mode,
+      bet: cleanBet,
+      secret,
+      maxAttempts: mode.maxAttempts,
+      attemptsUsed: 0,
+      history: [],
+      walletAfterBet,
+      createdAt: now,
+      expiresAt: now + 10 * 60 * 1000,
+    };
+
+    this.guessSessions.set(uId, session);
+    return {
+      userId: uId,
+      mode,
+      bet: cleanBet,
+      maxAttempts: session.maxAttempts,
+      remainingAttempts: session.maxAttempts,
+      balanceAfterBet: walletAfterBet,
+    };
+  }
+
+  /**
+   * Xử lý từng lượt dự đoán trong phiên Đoán Số tương tác (trả gợi ý Lớn Hơn / Nhỏ Hơn hoặc Kết toán thắng/thua).
+   */
+  submitGuessTurn({ userId, username, guessNumber, now = Date.now() }) {
+    this.assertGameAllowed(GAME_IDS.GUESS);
+    const uId = String(userId);
+    const session = this.getGuessSession(uId, now);
+    if (!session) {
+      throw new Error('Phiên Đoán Số của bạn không tồn tại hoặc đã hết hạn. Hãy bấm tạo ván mới!');
+    }
+
+    const pick = Math.trunc(Number(guessNumber));
+    if (!Number.isSafeInteger(pick) || pick < 1 || pick > session.mode.max) {
+      throw new Error(`Vui lòng nhập số nguyên hợp lệ từ **1** đến **${session.mode.max}**!`);
+    }
+
+    session.attemptsUsed += 1;
+    const remainingAttempts = Math.max(0, session.maxAttempts - session.attemptsUsed);
+
+    if (pick === session.secret) {
+      this.guessSessions.delete(uId);
+      session.history.push({ attempt: session.attemptsUsed, guess: pick, hint: 'correct' });
+
+      const payoutMult = Number(this.db.getSetting('gamePayoutMultiplier') ?? 1.0);
+      const rawReturn = Math.round(session.bet * (session.mode.mult + remainingAttempts * 0.15));
+      const profit = rawReturn - session.bet;
+      const finalPayout = session.bet + Math.round(profit * payoutMult);
+      const net = finalPayout - session.bet;
+
+      const settled = this.db.transaction(() => {
+        const user = this.economySystem.ensureUser(uId, username || session.username, now);
+        const nextWallet = user.wallet + finalPayout;
+        this.db.run(
+          `UPDATE users
+           SET wallet = ?,
+               total_earned = total_earned + ?,
+               games_played = games_played + 1,
+               games_won = games_won + 1,
+               updated_at = ?
+           WHERE user_id = ?`,
+          [nextWallet, net, now, uId]
+        );
+        this.db.run(
+          `INSERT INTO transactions (user_id, type, amount, balance_after, note, created_at)
+           VALUES (?, 'game_win', ?, ?, ?, ?)`,
+          [uId, finalPayout, nextWallet, `Thắng Đoán Số #${session.secret} ở lượt ${session.attemptsUsed}/${session.maxAttempts}`, now]
+        );
+        this.db.run(
+          `INSERT INTO game_logs (user_id, game, bet, payout, net, won, detail, created_at)
+           VALUES (?, 'guess', ?, ?, ?, 1, ?, ?)`,
+          [uId, session.bet, finalPayout, net, `${session.mode.label}: trúng số ${session.secret} sau ${session.attemptsUsed} lượt`, now]
+        );
+
+        this.questSystem?.incrementMetric(uId, 'games_played', 1, now);
+        this.questSystem?.incrementMetric(uId, 'play_guess', 1, now);
+        this.questSystem?.incrementMetric(uId, 'game_wins', 1, now);
+        if (net > 0) {
+          this.questSystem?.incrementMetric(uId, 'vnd_earned', net, now);
+          this.eventSystem?.recordProgress(uId, 'rich_race', net, now);
+        }
+        const expRes = this.levelSystem?.grantExp(uId, 25, now);
+        this.levelSystem?.evaluateMilestoneTitles(uId);
+
+        return { balanceAfter: nextWallet, expRes };
+      });
+
+      return {
+        finished: true,
+        won: true,
+        hint: 'correct',
+        pick,
+        secret: session.secret,
+        attemptsUsed: session.attemptsUsed,
+        maxAttempts: session.maxAttempts,
+        remainingAttempts,
+        history: session.history,
+        totalBet: session.bet,
+        payout: finalPayout,
+        net,
+        balanceAfter: settled.balanceAfter,
+        mode: session.mode,
+      };
+    }
+
+    const hint = session.secret > pick ? 'higher' : 'lower';
+    session.history.push({ attempt: session.attemptsUsed, guess: pick, hint });
+
+    if (remainingAttempts === 0) {
+      this.guessSessions.delete(uId);
+      const settledLoss = this.db.transaction(() => {
+        const user = this.economySystem.ensureUser(uId, username || session.username, now);
+        this.db.run(
+          `UPDATE users SET games_played = games_played + 1, updated_at = ? WHERE user_id = ?`,
+          [now, uId]
+        );
+        this.db.run(
+          `INSERT INTO game_logs (user_id, game, bet, payout, net, won, detail, created_at)
+           VALUES (?, 'guess', ?, 0, ?, 0, ?, ?)`,
+          [uId, session.bet, -session.bet, `${session.mode.label}: hết ${session.maxAttempts} lượt, số bí mật ${session.secret}`, now]
+        );
+        this.questSystem?.incrementMetric(uId, 'games_played', 1, now);
+        this.questSystem?.incrementMetric(uId, 'play_guess', 1, now);
+        this.levelSystem?.grantExp(uId, 10, now);
+        return user.wallet;
+      });
+
+      return {
+        finished: true,
+        won: false,
+        hint,
+        pick,
+        secret: session.secret,
+        attemptsUsed: session.attemptsUsed,
+        maxAttempts: session.maxAttempts,
+        remainingAttempts: 0,
+        history: session.history,
+        totalBet: session.bet,
+        payout: 0,
+        net: -session.bet,
+        balanceAfter: settledLoss,
+        mode: session.mode,
+      };
+    }
+
+    return {
+      finished: false,
+      won: false,
+      hint,
+      pick,
+      attemptsUsed: session.attemptsUsed,
+      maxAttempts: session.maxAttempts,
+      remainingAttempts,
+      history: session.history,
+      totalBet: session.bet,
+      mode: session.mode,
+    };
+  }
 
   playGuess({ userId, username, difficulty = 'easy', guessNumber, bet, now = Date.now() }) {
     this.assertGameAllowed(GAME_IDS.GUESS);
@@ -417,7 +692,7 @@ export class GameSystem {
   }
 
   // ==========================================================================
-  // ĐUA THÚ (/race) — Tạo khung hình diễn biến cuộc đua để cập nhật Embed mượt
+  // ĐUA THÚ (/race) — Tạo khung hình diễn biến cuộc đua từng giai đoạn + thứ hạng chung cuộc
   // ==========================================================================
 
   playRace({ userId, username, animalId, bet, now = Date.now() }) {
@@ -427,20 +702,37 @@ export class GameSystem {
 
     const cleanBet = this.validateBetAmount(bet);
     const winner = pickOne(RACE_ANIMALS);
-    const trackLen = 12;
+    const others = RACE_ANIMALS.filter((a) => a.id !== winner.id);
+    // Trộn ngẫu nhiên thứ hạng #2..#5 công bằng bằng crypto.randomInt
+    for (let i = others.length - 1; i > 0; i -= 1) {
+      const j = secureInt(0, i);
+      [others[i], others[j]] = [others[j], others[i]];
+    }
+    const standings = [winner, ...others];
+    const trackLen = 14;
 
-    // Dựng 3 khung hình tiến độ chặng đua dẫn tới kết quả thật của crypto.randomInt
+    // Dựng 3 chặng đường đua trực tiếp dẫn tới thứ hạng thật của crypto.randomInt
+    const finalScores = new Map([
+      [standings[0].id, trackLen],
+      [standings[1].id, trackLen - 1],
+      [standings[2].id, trackLen - 2],
+      [standings[3].id, trackLen - 4],
+      [standings[4].id, trackLen - 5],
+    ]);
+
     const frames = [1, 2, 3].map((step) => {
-      return RACE_ANIMALS.map((animal) => {
+      return RACE_ANIMALS.map((animal, laneIdx) => {
         let pos;
         if (step === 3) {
-          pos = animal.id === winner.id ? trackLen : secureInt(6, trackLen - 1);
+          pos = finalScores.get(animal.id) ?? 9;
         } else {
-          const base = step * 3;
-          pos = Math.min(trackLen - 1, base + secureInt(0, 3));
+          const base = step * 4;
+          pos = Math.min(trackLen - 2, base + secureInt(0, 3));
         }
-        const bar = `${'━'.repeat(pos)}${animal.emoji}${'─'.repeat(Math.max(0, trackLen - pos))}🏁`;
-        return `${bar} **${animal.name}**`;
+        const filled = '█'.repeat(pos);
+        const empty = '░'.repeat(Math.max(0, trackLen - pos));
+        const mark = animal.id === chosen.id ? ' ⭐' : '';
+        return `\`Làn ${laneIdx + 1}\` [${filled}${animal.emoji}${empty}]🏁 **${animal.name}**${mark}`;
       }).join('\n');
     });
 
@@ -458,7 +750,7 @@ export class GameSystem {
       now,
     });
 
-    return { ...settled, chosen, winner, frames };
+    return { ...settled, chosen, winner, standings, frames };
   }
 
   // ==========================================================================
@@ -563,8 +855,10 @@ export class GameSystem {
       );
 
       this.questSystem?.incrementMetric(winner.user_id, 'games_played', 1, now);
+      this.questSystem?.incrementMetric(winner.user_id, 'play_rps', 1, now);
       this.questSystem?.incrementMetric(winner.user_id, 'game_wins', 1, now);
       this.questSystem?.incrementMetric(loser.user_id, 'games_played', 1, now);
+      this.questSystem?.incrementMetric(loser.user_id, 'play_rps', 1, now);
 
       return {
         outcome: p1Won ? 'p1' : 'p2',

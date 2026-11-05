@@ -6,10 +6,11 @@ import {
   MessageFlags,
   SlashCommandBuilder,
 } from 'discord.js';
+import { ASSET_PATHS, buildAssetAttachment } from '../../utils/assetRegistry.js';
 import { COLORS } from '../../utils/embeds.js';
 import { formatVnd, renderProgressBar } from '../../utils/format.js';
 
-function buildQuestEmbed(user, scope, quests) {
+function buildQuestEmbed(user, scope, quests, imageUrl = null) {
   const titles = {
     all: '📜 Tổng Quan Nhiệm Vụ Của Bạn',
     daily: '☀️ Nhiệm Vụ Hằng Ngày (Làm mới 00:00 UTC+7)',
@@ -30,12 +31,15 @@ function buildQuestEmbed(user, scope, quests) {
         })
       : ['*Hiện không có nhiệm vụ nào trong mục này.*'];
 
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(COLORS.PRIMARY)
     .setTitle(titles[scope] ?? titles.all)
     .setDescription(lines.join('\n\n').slice(0, 4000))
     .setFooter({ text: `Người chơi: ${user.username} • Nhấn nút Nhận Thưởng hoặc dùng /quest claim` })
     .setTimestamp();
+
+  if (imageUrl) embed.setImage(imageUrl);
+  return embed;
 }
 
 function buildQuestComponents(userId, quests, activeScope) {
@@ -127,9 +131,11 @@ export const questCommand = {
       interaction.user.username,
       scope
     );
+    const qBanner = buildAssetAttachment(ASSET_PATHS.QUEST_BANNER, 'quest_banner.png');
 
     await interaction.reply({
-      embeds: [buildQuestEmbed(interaction.user, scope, quests)],
+      embeds: [buildQuestEmbed(interaction.user, scope, quests, qBanner.url)],
+      files: [qBanner.attachment],
       components: buildQuestComponents(interaction.user.id, quests, scope),
     });
   },
@@ -154,8 +160,10 @@ export async function handleQuestInteraction(interaction, { questSystem }) {
       interaction.user.username,
       scope
     );
+    const qBanner = buildAssetAttachment(ASSET_PATHS.QUEST_BANNER, 'quest_banner.png');
     await interaction.update({
-      embeds: [buildQuestEmbed(interaction.user, scope, quests)],
+      embeds: [buildQuestEmbed(interaction.user, scope, quests, qBanner.url)],
+      files: [qBanner.attachment],
       components: buildQuestComponents(interaction.user.id, quests, scope),
     });
     return true;

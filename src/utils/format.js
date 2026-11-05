@@ -1,17 +1,21 @@
 import { CURRENCY } from '../config/constants.js';
 
+export function formatNumber(amount) {
+  const safe = Math.trunc(Number(amount) || 0);
+  const sign = safe < 0 ? '-' : '';
+  const formatted = Math.abs(safe)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${sign}${formatted}`;
+}
+
 /**
  * Định dạng số nguyên sang tiền tệ VNĐ dễ đọc (ví dụ: `1.250.000 VNĐ`).
  * @param {number} amount
  * @returns {string}
  */
 export function formatVnd(amount) {
-  const safe = Math.trunc(Number(amount) || 0);
-  const sign = safe < 0 ? '-' : '';
-  const formatted = Math.abs(safe)
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  return `${sign}${formatted} ${CURRENCY.NAME}`;
+  return `${formatNumber(amount)} ${CURRENCY.NAME}`;
 }
 
 /**

@@ -42,6 +42,7 @@ const EVENT_CHOICES = [
   { name: '⭐ Đua Top Cấp Độ', value: EVENT_TYPES.LEVEL_RACE },
   { name: '🦀 Sự Kiện Bầu Cua', value: EVENT_TYPES.BAUCUA_EVENT },
   { name: '🎲 Sự Kiện Tài Xỉu', value: EVENT_TYPES.TAIXIU_EVENT },
+  { name: '🔤 Sự Kiện Nối Từ', value: EVENT_TYPES.NOITU_EVENT },
   { name: '📜 Sự Kiện Nhiệm Vụ', value: EVENT_TYPES.QUEST_EVENT },
   { name: '📅 Đăng Nhập Liên Tục', value: EVENT_TYPES.LOGIN_STREAK },
   { name: '🎉 Phát Thưởng Server', value: EVENT_TYPES.GLOBAL_AIRDROP },

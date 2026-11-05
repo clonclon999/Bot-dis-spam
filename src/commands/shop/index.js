@@ -6,6 +6,7 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { SHOP_ITEMS } from '../../config/constants.js';
+import { ASSET_PATHS, buildAssetAttachment } from '../../utils/assetRegistry.js';
 import { COLORS } from '../../utils/embeds.js';
 import { formatVnd } from '../../utils/format.js';
 
@@ -18,10 +19,11 @@ const ITEM_CHOICES = Object.values(SHOP_ITEMS).map((item) => ({
 const shopCmd = {
   data: new SlashCommandBuilder()
     .setName('shop')
-    .setDescription('Mở Cửa Hàng Vật Phẩm, Thẻ Tăng Tốc, Khung Hồ Sơ & Hộp Quà Bí Ẩn'),
+    .setDescription('Mở Cửa Hàng Vật Phẩm, Thẻ Tăng Tốc, Thú Cưng, Khung Hồ Sơ & Hộp Quà Bí Ẩn'),
   async execute(interaction, { shopSystem, economySystem }) {
     const bal = economySystem.getBalance(interaction.user.id, interaction.user.username);
     const items = shopSystem.listCatalog();
+    const sBanner = buildAssetAttachment(ASSET_PATHS.SHOP_BANNER, 'shop_banner.png');
 
     const lines = items.map(
       (i) =>
@@ -32,9 +34,10 @@ const shopCmd = {
       .setColor(0xf1c40f)
       .setTitle('🛒 Cửa Hàng Vật Phẩm Trung Tâm')
       .setDescription(
-        `💵 Ví của bạn: **${formatVnd(bal.wallet)}** *(Mẹo: Mua thú cưng tại \`/pet shop\`)*\n\n` +
+        `💵 Ví của bạn: **${formatVnd(bal.wallet)}** *(Mẹo: Mua thú cưng chọn loài tại \`/pet shop\`)*\n\n` +
           lines.join('\n\n')
       )
+      .setImage(sBanner.url)
       .setFooter({ text: 'Chọn vật phẩm ở Menu bên dưới để mua nhanh 1 món hoặc dùng /buy' })
       .setTimestamp();
 
@@ -52,7 +55,7 @@ const shopCmd = {
         )
     );
 
-    await interaction.reply({ embeds: [embed], components: [row] });
+    await interaction.reply({ embeds: [embed], files: [sBanner.attachment], components: [row] });
   },
 };
 

@@ -61,9 +61,9 @@ describe('Quests, Shop (Mystery Box), Pets, Titles, Crime/Wanted, Events & Backu
         const sold = shopSystem.sellItem('hero-1', 'Hero', 'mystery_box', 1);
         assert.ok(sold.totalProceeds > 0);
 
-        // 3. QUESTS: Hoàn thành nhiệm vụ hằng ngày & chống nhận thưởng trùng (Anti-Double-Claim)
+        // 3. QUESTS: Hoàn thành nhiệm vụ hằng ngày (đủ 9 nhiệm vụ chuẩn Mục 13) & chống nhận thưởng trùng
         const dailyList = questSystem.getUserQuests('hero-1', 'Hero', 'daily');
-        assert.equal(dailyList.length, 6);
+        assert.equal(dailyList.length, 9);
         questSystem.incrementMetric('hero-1', 'work_count', 5);
         const claimed = questSystem.claimRewards('hero-1', 'Hero', 'daily_work_5');
         assert.equal(claimed.claimedQuests.length, 1);

@@ -239,6 +239,20 @@ export class WordChainSystem {
     return out;
   }
 
+  /**
+   * Đếm số lượng người chơi đang ở trong các phòng Nối Từ hoạt động (hiển thị tại /games).
+   */
+  getActivePlayerCount() {
+    let count = 0;
+    for (const room of this.rooms.values()) {
+      if (room.status === 'waiting' || room.status === 'playing') {
+        if (room.hostId) count += 1;
+        if (room.guestId) count += 1;
+      }
+    }
+    return count;
+  }
+
   attachBoardMessage(roomId, message) {
     const room = this.getRoom(roomId);
     if (!room || !message) return;
@@ -966,6 +980,7 @@ export class WordChainSystem {
         reason,
         totalTurns,
         lastWord,
+        recentWords: usedWordsArray.slice(-8),
         baseRewardVnd,
         streakBonusVnd,
         totalRewardVnd,
@@ -977,12 +992,18 @@ export class WordChainSystem {
 
     if (!txOutcome) return null;
 
-    // Cộng EXP, tiến độ Nhiệm vụ & Danh hiệu ngoài khối lõi
+    // Cộng EXP, tiến độ Nhiệm vụ (play_noitu, games_played, game_wins, vnd_earned), Sự kiện & Danh hiệu
     this.levelSystem?.grantExp?.(winnerId, 30, now);
     this.levelSystem?.grantExp?.(loserId, 10, now);
     this.questSystem?.incrementMetric?.(winnerId, 'games_played', 1, now);
+    this.questSystem?.incrementMetric?.(winnerId, 'play_noitu', 1, now);
     this.questSystem?.incrementMetric?.(winnerId, 'game_wins', 1, now);
+    if (txOutcome.totalRewardVnd > 0) {
+      this.questSystem?.incrementMetric?.(winnerId, 'vnd_earned', txOutcome.totalRewardVnd, now);
+    }
     this.questSystem?.incrementMetric?.(loserId, 'games_played', 1, now);
+    this.questSystem?.incrementMetric?.(loserId, 'play_noitu', 1, now);
+    this.eventSystem?.recordProgress?.(winnerId, 'noitu_event', 1, now);
 
     const winRow = this.db.get('SELECT wins FROM noitu_stats WHERE user_id = ?', [String(winnerId)]);
     if ((winRow?.wins ?? 0) >= 10) {

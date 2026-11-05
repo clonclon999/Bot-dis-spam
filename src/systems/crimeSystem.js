@@ -61,6 +61,22 @@ export class CrimeSystem {
         );
       }
 
+      // Chống lạm dụng cướp lặp lại cùng 1 nạn nhân để farm tiền (lưu vết bền vững trong SQLite)
+      const sameTargetCdMs = Number(this.db.getSetting('robSameTargetCooldownSec') ?? 3600) * 1000;
+      if (sameTargetCdMs > 0) {
+        const recentSameTarget = this.db.get(
+          `SELECT created_at FROM transactions
+           WHERE user_id = ? AND counterparty_id = ? AND type IN ('rob_gain', 'rob_fine')
+           ORDER BY id DESC LIMIT 1`,
+          [String(robberId), String(victimId)]
+        );
+        if (recentSameTarget && now - recentSameTarget.created_at < sameTargetCdMs) {
+          throw new Error(
+            `🚫 Chống farm mục tiêu lặp lại: Bạn vừa nhắm vào <@${victimId}> gần đây! Hãy đợi **${formatRemainingMs(sameTargetCdMs - (now - recentSameTarget.created_at))}** trước khi cướp lại mục tiêu này.`
+          );
+        }
+      }
+
       if (victim.wallet < 5_000) {
         throw new Error('Ví tiền mặt của mục tiêu quá ít (< 5.000 VNĐ), không bõ công ra tay!');
       }

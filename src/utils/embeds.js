@@ -7,6 +7,7 @@ export const COLORS = Object.freeze({
   DANGER: 0xe74c3c,
   INFO: 0x3498db,
   PRIMARY: 0x5865f2,
+  GOLD: 0xf1c40f,
   MUTED: 0x95a5a6,
 });
 
@@ -278,4 +279,12 @@ export function buildFeedbackEmbed({ color = COLORS.PRIMARY, title, description,
     embed.addFields(fields);
   }
   return embed;
+}
+
+export function errorEmbed(title, description) {
+  return buildFeedbackEmbed({
+    color: COLORS.DANGER,
+    title: `❌ ${title}`,
+    description,
+  });
 }

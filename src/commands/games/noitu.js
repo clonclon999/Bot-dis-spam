@@ -6,6 +6,7 @@ import {
   MessageFlags,
   SlashCommandBuilder,
 } from 'discord.js';
+import { ASSET_PATHS, buildAssetAttachment } from '../../utils/assetRegistry.js';
 import { COLORS } from '../../utils/embeds.js';
 import { formatVnd } from '../../utils/format.js';
 
@@ -15,19 +16,34 @@ export function capitalizeVi(text) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+function buildTurnBar(room, activeUserId) {
+  const p1Active = String(activeUserId) === String(room.hostId);
+  const left = p1Active ? `🟢 **[ĐANG ĐẤU]** <@${room.hostId}>` : `⚪ <@${room.hostId}>`;
+  const right = !p1Active ? `🟢 **[ĐANG ĐẤU]** <@${room.guestId}>` : `⚪ <@${room.guestId}>`;
+  return `${left}  ━━⚔️━━  ${right}`;
+}
+
+function getActiveAvatarUrl(room, activeUserId) {
+  if (!room) return null;
+  return String(activeUserId) === String(room.hostId)
+    ? room.hostAvatarUrl || null
+    : room.guestAvatarUrl || null;
+}
+
 // ============================================================================
-// Các hàm tạo Embed chuẩn Mục 5 & Mục 6 (Chỉnh sửa tại chỗ chống spam tin nhắn)
+// Các hàm tạo Embed Game Show Nối Từ (Chỉnh sửa tại chỗ chống spam tin nhắn)
 // ============================================================================
 
 export function buildNoituHubPayload(wordChainSystem) {
   const cfg = wordChainSystem.getConfig();
   const activeCount = wordChainSystem.rooms.size;
+  const banner = buildAssetAttachment(ASSET_PATHS.GAME_NOITU, 'noitu_gameshow.png');
 
   const embed = new EmbedBuilder()
     .setColor(0x2ecc71)
-    .setTitle('🔤 ĐẤU TRƯỜNG NỐI TỪ TIẾNG VIỆT PRO (1v1)')
+    .setTitle('🔤 GAME SHOW NỐI TỪ TIẾNG VIỆT PRO (1v1)')
     .setDescription(
-      'Chào mừng đến với hệ thống **Nối Từ Tiếng Việt Đối Kháng 2 Người Chơi**!\n' +
+      'Chào mừng đến với hệ thống **Game Show Nối Từ Đối Kháng 2 Người Chơi**!\n' +
         'Sử dụng các nút bên dưới hoặc lệnh `/noitu` để tạo phòng, mời bạn bè thi tài từ vựng và săn thưởng **VNĐ**.\n\n' +
         `• 📚 Kho từ điển cục bộ: **${wordChainSystem.dictionary.size.toLocaleString('vi-VN')} từ ghép**\n` +
         `• ⏱️ Thời gian mỗi lượt: **${cfg.timeoutSec} giây** *(Cảnh báo khi còn 10s)*\n` +
@@ -35,6 +51,7 @@ export function buildNoituHubPayload(wordChainSystem) {
         `• 🔥 Thưởng chuỗi thắng: **3 trận (+${formatVnd(cfg.streak3Bonus)}) • 5 trận (+${formatVnd(cfg.streak5Bonus)}) • 10 trận (+${formatVnd(cfg.streak10Bonus)})**\n` +
         `• 🏟️ Phòng đang hoạt động: **${activeCount} phòng**`
     )
+    .setImage(banner.url)
     .setFooter({ text: 'Gõ /noitu create để mở phòng mới hoặc bấm nút bên dưới' })
     .setTimestamp();
 
@@ -66,8 +83,10 @@ export function buildNoituHubPayload(wordChainSystem) {
       .setStyle(ButtonStyle.Secondary)
   );
 
-  return { embeds: [embed], components: [row1] };
+  return { embeds: [embed], files: [banner.attachment], components: [row1] };
 }
+
+export const buildNoituLobbyPayload = buildNoituHubPayload;
 
 export function buildRoomLobbyPayload(room, cfg) {
   const isFull = Boolean(room.guestId);
@@ -115,20 +134,26 @@ export function buildRoomLobbyPayload(room, cfg) {
   return { embeds: [embed], components: [row] };
 }
 
-export function buildMatchStartPayload(room) {
+export function buildMatchStartPayload(room, rewardVnd = 1_000) {
   const deadlineUnix = Math.floor((room.turnDeadlineAt || Date.now() + 30_000) / 1000);
+  const banner = buildAssetAttachment(ASSET_PATHS.GAME_NOITU, 'noitu_stage.png');
+  const activeAvatar = getActiveAvatarUrl(room, room.currentTurnUserId);
 
   const embed = new EmbedBuilder()
     .setColor(0x2ecc71)
     .setTitle(`🎮 NỐI TỪ TIẾNG VIỆT – BẮT ĐẦU! [#${room.roomId}]`)
     .setDescription(
-      `⚔️ **Cặp đấu:** <@${room.hostId}> 🆚 <@${room.guestId}>\n\n` +
+      `📺 **Thanh Lượt Chơi:** ${buildTurnBar(room, room.currentTurnUserId)}\n\n` +
+        `💰 **Giải thưởng trận:** **+${formatVnd(rewardVnd)}** *(+ thưởng chuỗi thắng)*\n\n` +
         `🔗 **Lượt mở màn:** Nhập bất kỳ từ ghép **2 tiếng tiếng Việt** hợp lệ trong từ điển *(ví dụ: Học sinh)*\n\n` +
         `⏳ **Lượt hiện tại:** <@${room.currentTurnUserId}>\n\n` +
         `Thời gian còn lại: **${room.turnTimeoutSec} giây** (<t:${deadlineUnix}:R>)`
     )
+    .setImage(banner.url)
     .setFooter({ text: `Phòng ${room.roomId} • Gõ trực tiếp từ ghép 2 tiếng vào kênh chat` })
     .setTimestamp();
+
+  if (activeAvatar) embed.setThumbnail(activeAvatar);
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -138,7 +163,7 @@ export function buildMatchStartPayload(room) {
       .setStyle(ButtonStyle.Danger)
   );
 
-  return { embeds: [embed], components: [row] };
+  return { embeds: [embed], files: [banner.attachment], components: [row] };
 }
 
 export function buildValidTurnPayload({
@@ -154,19 +179,30 @@ export function buildValidTurnPayload({
   const timeText = tenSecWarning
     ? `⚠️ **Chỉ còn 10 giây!** (<t:${deadlineUnix}:R>)`
     : `**${timeoutSec} giây.** (<t:${deadlineUnix}:R>)`;
+  const activeAvatar = getActiveAvatarUrl(room, nextTurnUserId);
+
+  const recentTrail = Array.isArray(room.wordHistory) && room.wordHistory.length > 0
+    ? room.wordHistory
+        .slice(-6)
+        .map((h) => `\`${capitalizeVi(h.word)}\``)
+        .join(' ➔ ')
+    : `\`${capitalizeVi(acceptedWord)}\``;
 
   const embed = new EmbedBuilder()
     .setColor(tenSecWarning ? COLORS.WARNING : 0x2ecc71)
     .setTitle('🟢 NỐI TỪ – HỢP LỆ!')
     .setDescription(
-      `👤 Người chơi: <@${playerUserId}>\n\n` +
-        `📝 Từ vừa nối: **${capitalizeVi(acceptedWord)}**\n\n` +
-        `🔗 Tiếng tiếp theo: **${capitalizeVi(nextPrefix)}**\n\n` +
-        `⏳ Lượt tiếp theo: <@${nextTurnUserId}>\n\n` +
-        `Thời gian còn lại: ${timeText}`
+      `📺 **Thanh Lượt Chơi:** ${buildTurnBar(room, nextTurnUserId)}\n\n` +
+        `👤 Người chơi vừa nối: <@${playerUserId}>\n` +
+        `📝 Từ hiện tại: **${capitalizeVi(acceptedWord)}**\n` +
+        `🔗 Tiếng cần nối tiếp: **${capitalizeVi(nextPrefix)}**\n` +
+        `📜 Lịch sử từ gần đây: ${recentTrail}\n\n` +
+        `⏳ Lượt tiếp theo: <@${nextTurnUserId}> • Thời gian còn lại: ${timeText}`
     )
     .setFooter({ text: `Phòng ${room.roomId} • Lượt nối thứ ${room.turnCount}` })
     .setTimestamp();
+
+  if (activeAvatar) embed.setThumbnail(activeAvatar);
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -241,6 +277,8 @@ export function buildVictoryPayload(outcome) {
         ? ` *(Chuỗi thắng hiện tại: **${outcome.newStreak}** trận)*`
         : '';
 
+  const victoryBanner = buildAssetAttachment(ASSET_PATHS.VICTORY_BANNER, 'noitu_victory.png');
+
   const embed = new EmbedBuilder()
     .setColor(0xf1c40f)
     .setTitle('🏆 CHÚC MỪNG! BẠN ĐÃ CHIẾN THẮNG!')
@@ -251,10 +289,11 @@ export function buildVictoryPayload(outcome) {
         `📌 Kết quả: ${reasonMap[outcome.reason] || outcome.reason}\n\n` +
         `🎮 Cảm ơn mọi người đã tham gia!`
     )
+    .setImage(victoryBanner.url)
     .setFooter({ text: `Phòng ${outcome.roomId} • Gõ /noitu create để mở ván mới` })
     .setTimestamp();
 
-  return { embeds: [embed], components: [] };
+  return { embeds: [embed], files: [victoryBanner.attachment], components: [] };
 }
 
 export function buildRulesEmbed(cfg) {
@@ -462,6 +501,7 @@ export const noituCommand = {
         invitedUserId: invited?.id ?? null,
         invitedIsBot: Boolean(invited?.bot),
       });
+      room.hostAvatarUrl = interaction.user?.displayAvatarURL?.({ extension: 'png', size: 128 }) ?? null;
 
       const payload = buildRoomLobbyPayload(room, wordChainSystem.getConfig());
       if (invited) {
@@ -490,6 +530,7 @@ export const noituCommand = {
         username: uname,
         roomId: code,
       });
+      room.guestAvatarUrl = interaction.user?.displayAvatarURL?.({ extension: 'png', size: 128 }) ?? null;
       room.channelRef = interaction.channel ?? room.channelRef ?? null;
 
       const payload = buildRoomLobbyPayload(room, wordChainSystem.getConfig());
@@ -623,9 +664,10 @@ export function registerNoituUiHooks(wordChainSystem) {
 // Xử lý Nút bấm tương tác trên Phòng chờ, Hub & Trận đấu
 // ============================================================================
 
-export async function handleNoituInteraction(interaction, { wordChainSystem }) {
+export async function handleNoituInteraction(interaction, ctxOrDeps) {
+  const wordChainSystem = ctxOrDeps?.wordChainSystem || ctxOrDeps?.systems?.wordChainSystem;
   const id = interaction.customId || '';
-  if (!id.startsWith('noitu:')) return false;
+  if (!id.startsWith('noitu:') || !wordChainSystem) return false;
 
   const parts = id.split(':');
   const action = parts[1];
@@ -666,6 +708,7 @@ export async function handleNoituInteraction(interaction, { wordChainSystem }) {
       hostId: uid,
       hostName: uname,
     });
+    room.hostAvatarUrl = interaction.user?.displayAvatarURL?.({ extension: 'png', size: 128 }) ?? null;
     const payload = buildRoomLobbyPayload(room, wordChainSystem.getConfig());
     const replyRes = await interaction.reply(payload);
     const msg =
@@ -683,6 +726,7 @@ export async function handleNoituInteraction(interaction, { wordChainSystem }) {
       userId: uid,
       username: uname,
     });
+    room.guestAvatarUrl = interaction.user?.displayAvatarURL?.({ extension: 'png', size: 128 }) ?? null;
     const payload = buildRoomLobbyPayload(room, wordChainSystem.getConfig());
     if (room.boardMessage && typeof room.boardMessage.edit === 'function') {
       await room.boardMessage.edit({ content: null, ...payload }).catch(() => {});
@@ -702,6 +746,7 @@ export async function handleNoituInteraction(interaction, { wordChainSystem }) {
       username: uname,
       roomId,
     });
+    room.guestAvatarUrl = interaction.user?.displayAvatarURL?.({ extension: 'png', size: 128 }) ?? null;
     wordChainSystem.attachBoardMessage(room.roomId, interaction.message);
     await interaction.update({
       content: null,
