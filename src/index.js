@@ -6,6 +6,7 @@ import { loadEnv } from './config/env.js';
 import { createBotSystems } from './systems/index.js';
 import { startHealthServer } from './utils/healthServer.js';
 import { logger } from './utils/logger.js';
+import { globalPanelCleaner } from './utils/panelCleaner.js';
 
 /**
  * Điểm khởi chạy trung tâm của DISCORD GAME BOT PRO & ANTI-SPAM SYSTEM.
@@ -25,6 +26,7 @@ async function bootstrap() {
     systems.punishmentService.sweepExpiredStrikes();
     sweepGameSessions();
     sweepPendingConfirmations();
+    globalPanelCleaner.sweepExpired();
   }, Math.max(SYSTEM_LIMITS.TRACKER_SWEEP_INTERVAL_MS * 5, 300_000));
 
   if (typeof gcInterval.unref === 'function') {

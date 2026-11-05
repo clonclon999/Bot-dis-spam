@@ -32,6 +32,7 @@ export const GAME_IDS = Object.freeze({
   GUESS: 'guess',
   RACE: 'race',
   RPS: 'rps',
+  NOITU: 'noitu',
 });
 
 export const GAME_LABELS = Object.freeze({
@@ -41,6 +42,7 @@ export const GAME_LABELS = Object.freeze({
   [GAME_IDS.GUESS]: '🔢 Đoán Số',
   [GAME_IDS.RACE]: '🏇 Đua Thú',
   [GAME_IDS.RPS]: '✂️ Oẳn Tù Tì',
+  [GAME_IDS.NOITU]: '🔤 Nối Từ Tiếng Việt',
 });
 
 export const BAUCUA_MASCOTS = Object.freeze([
@@ -233,6 +235,7 @@ export const TITLES = Object.freeze({
   than_may_man: Object.freeze({ id: 'than_may_man', name: '🍀 Thần May Mắn', desc: 'Chiến thắng tổng cộng 25 ván trò chơi.' }),
   vua_bau_cua: Object.freeze({ id: 'vua_bau_cua', name: '🦀 Vua Bầu Cua', desc: 'Thắng 15 ván Bầu Cua.' }),
   cao_thu_tai_xiu: Object.freeze({ id: 'cao_thu_tai_xiu', name: '🎲 Cao Thủ Tài Xỉu', desc: 'Thắng 15 ván Tài Xỉu.' }),
+  vua_noi_tu: Object.freeze({ id: 'vua_noi_tu', name: '🔤 Vua Nối Từ', desc: 'Nối đúng từ 25 lượt trở lên trong trò Nối Từ.' }),
   nha_suu_tap: Object.freeze({ id: 'nha_suu_tap', name: '🐾 Nhà Sưu Tập', desc: 'Sở hữu từ 4 loài thú cưng trở lên.' }),
   huyen_thoai: Object.freeze({ id: 'huyen_thoai', name: '🏅 Huyền Thoại Viễn Chinh', desc: 'Mở khóa từ Cửa hàng.' }),
   long_chu: Object.freeze({ id: 'long_chu', name: '🐲 Kỵ Sĩ Rồng Ngọc', desc: 'Sở hữu thú cưng Rồng Ngọc Bích.' }),

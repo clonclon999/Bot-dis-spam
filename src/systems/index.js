@@ -12,6 +12,7 @@ import { LogSystem } from './logSystem.js';
 import { PetSystem } from './petSystem.js';
 import { QuestSystem } from './questSystem.js';
 import { ShopSystem } from './shopSystem.js';
+import { WordChainSystem } from './wordChainSystem.js';
 
 /**
  * Khởi tạo và liên kết toàn bộ các hệ thống nghiệp vụ của DISCORD GAME BOT PRO
@@ -55,6 +56,13 @@ export async function createBotSystems(dataDir) {
     eventSystem,
     logSystem,
   });
+  const wordChainSystem = new WordChainSystem({
+    db,
+    economySystem,
+    levelSystem,
+    questSystem,
+    eventSystem,
+  });
 
   // Liên kết phụ thuộc hai chiều sạch sẽ
   levelSystem.bindSystems({ petSystem, questSystem, eventSystem });
@@ -78,5 +86,6 @@ export async function createBotSystems(dataDir) {
     shopSystem,
     crimeSystem,
     gameSystem,
+    wordChainSystem,
   };
 }

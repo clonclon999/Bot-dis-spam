@@ -180,4 +180,28 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_logs (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS guild_game_channels (
+  guild_id TEXT NOT NULL,
+  game_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  updated_by TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (guild_id, game_id)
+);
+
+CREATE TABLE IF NOT EXISTS wordchain_custom_words (
+  word TEXT PRIMARY KEY,
+  added_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wordchain_stats (
+  user_id TEXT PRIMARY KEY,
+  correct_turns INTEGER NOT NULL DEFAULT 0,
+  rounds_won INTEGER NOT NULL DEFAULT 0,
+  best_chain INTEGER NOT NULL DEFAULT 0,
+  total_vnd INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
 `;

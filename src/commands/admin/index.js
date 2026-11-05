@@ -22,6 +22,7 @@ import {
 import { COLORS, formatDurationVi } from '../../utils/embeds.js';
 import { formatVnd } from '../../utils/format.js';
 import {
+  canManageAntiSpam,
   hasBotRole,
   isHardcodedOwner,
   resolveBotRole,
@@ -35,6 +36,11 @@ const GAME_CHOICES = Object.entries(GAME_LABELS).map(([val, name]) => ({
   name,
   value: val,
 }));
+
+const GAME_CHANNEL_CHOICES = [
+  ...GAME_CHOICES,
+  { name: '🎯 Tất cả 6 trò đặt cược (trừ Nối Từ)', value: 'all_betting' },
+];
 
 const EVENT_CHOICES = [
   { name: '💰 Đua Top Người Giàu', value: EVENT_TYPES.RICH_RACE },
@@ -274,6 +280,20 @@ export const adminCommand = {
           s.setName('resetstats').setDescription('Đặt lại thống kê thắng thua').addUserOption((o) => o.setName('u').setDescription('Người chơi').setRequired(true))
         )
         .addSubcommand((s) => s.setName('leaderboard').setDescription('Top cao thủ thắng nhiều trận nhất'))
+        .addSubcommand((s) =>
+          s
+            .setName('setchannel')
+            .setDescription('Chỉ định kênh riêng cho từng trò chơi')
+            .addStringOption((o) => o.setName('game').setDescription('Trò chơi').setRequired(true).addChoices(...GAME_CHANNEL_CHOICES))
+            .addChannelOption((o) => o.setName('ch').setDescription('Kênh văn bản').addChannelTypes(ChannelType.GuildText).setRequired(true))
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('clearchannel')
+            .setDescription('Gỡ kênh của trò chơi')
+            .addStringOption((o) => o.setName('game').setDescription('Trò chơi').setRequired(true).addChoices(...GAME_CHANNEL_CHOICES))
+        )
+        .addSubcommand((s) => s.setName('channels').setDescription('Xem danh sách kênh đã gán cho các trò chơi'))
     )
 
     // Nhóm 4: Quản lý nhiệm vụ (4 lệnh)
@@ -379,11 +399,16 @@ export const adminCommand = {
     // Các lệnh cho phép MODERATOR xem/cảnh cáo
     const modAllowed =
       (group === 'user' && ['userinfo', 'inventory', 'warn', 'warnings'].includes(sub)) ||
-      (group === 'game' && sub === 'leaderboard') ||
+      (group === 'game' && ['leaderboard', 'channels'].includes(sub)) ||
       (group === 'system' && ['stats', 'health', 'ping', 'uptime'].includes(sub));
 
+    const isGuildChanSetup =
+      group === 'game' &&
+      ['setchannel', 'clearchannel', 'channels'].includes(sub) &&
+      canManageAntiSpam(interaction.member, false);
+
     const requiredRole = modAllowed ? BOT_ROLES.MODERATOR : BOT_ROLES.ADMIN;
-    if (!hasBotRole(db, actorId, requiredRole)) {
+    if (!isGuildChanSetup && !hasBotRole(db, actorId, requiredRole)) {
       await interaction.reply({
         content: `⛔ Bạn cần tối thiểu quyền **${requiredRole}** trong hệ thống Bot để thực thi lệnh này.`,
         flags: MessageFlags.Ephemeral,
@@ -691,6 +716,88 @@ export const adminCommand = {
             : ['*Chưa có dữ liệu.*'];
         await interaction.reply({
           embeds: [new EmbedBuilder().setColor(COLORS.PRIMARY).setTitle('🏆 Top Cao Thủ Thắng Trận').setDescription(lines.join('\n'))],
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (sub === 'setchannel') {
+        if (!interaction.guildId) {
+          throw new Error('Lệnh gán kênh trò chơi chỉ sử dụng bên trong Máy chủ (Server).');
+        }
+        const gameOpt = interaction.options.getString('game', true);
+        const targetCh = interaction.options.getChannel('ch', true);
+        const targetGames =
+          gameOpt === 'all_betting'
+            ? Object.values(GAME_IDS).filter((id) => id !== GAME_IDS.NOITU)
+            : [gameOpt];
+
+        for (const gId of targetGames) {
+          db.setGameChannel(interaction.guildId, gId, targetCh.id, actorId);
+        }
+        db.recordAudit({
+          actorId,
+          actorRole,
+          action: 'set_game_channel',
+          details: `${gameOpt}=${targetCh.id}`,
+        });
+
+        const label =
+          gameOpt === 'all_betting'
+            ? 'Tất cả 6 trò đặt cược (trừ Nối Từ)'
+            : GAME_LABELS[gameOpt];
+        await interaction.reply({
+          content: `✅ Đã chỉ định kênh <#${targetCh.id}> cho **${label}**! Từ nay người chơi bắt buộc vào đúng <#${targetCh.id}> mới chơi được.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (sub === 'clearchannel') {
+        if (!interaction.guildId) {
+          throw new Error('Lệnh này chỉ dùng bên trong Máy chủ (Server).');
+        }
+        const gameOpt = interaction.options.getString('game', true);
+        const targetGames =
+          gameOpt === 'all_betting'
+            ? Object.values(GAME_IDS).filter((id) => id !== GAME_IDS.NOITU)
+            : [gameOpt];
+
+        for (const gId of targetGames) {
+          db.clearGameChannel(interaction.guildId, gId);
+        }
+        db.recordAudit({
+          actorId,
+          actorRole,
+          action: 'clear_game_channel',
+          details: gameOpt,
+        });
+        await interaction.reply({
+          content: `🗑️ Đã gỡ cấu hình kênh của **${gameOpt === 'all_betting' ? '6 trò đặt cược' : GAME_LABELS[gameOpt]}**.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (sub === 'channels') {
+        if (!interaction.guildId) {
+          throw new Error('Lệnh này chỉ dùng bên trong Máy chủ (Server).');
+        }
+        const chanMap = db.getGuildGameChannels(interaction.guildId);
+        const lines = Object.entries(GAME_LABELS).map(([gId, gLabel]) => {
+          const chId = chanMap[gId];
+          return `• ${gLabel}: ${chId ? `<#${chId}>` : '*⚠️ Chưa gán kênh (Đang khóa)*'}`;
+        });
+        await interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(COLORS.INFO)
+              .setTitle('📍 Danh Sách Kênh Riêng Cho Từng Trò Chơi')
+              .setDescription(
+                lines.join('\n') +
+                  '\n\n💡 *Dùng `/admin game setchannel` để gán từng trò vào đúng kênh chat riêng biệt.*'
+              ),
+          ],
           flags: MessageFlags.Ephemeral,
         });
         return;

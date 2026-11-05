@@ -171,6 +171,13 @@ export class LevelSystem {
       )?.c ?? 0;
     if (taixiuWins >= 15) tryAdd('cao_thu_tai_xiu');
 
+    const noituTurns =
+      this.db.get(
+        'SELECT correct_turns FROM wordchain_stats WHERE user_id = ?',
+        [String(userId)]
+      )?.correct_turns ?? 0;
+    if (noituTurns >= 25) tryAdd('vua_noi_tu');
+
     const petSpeciesCount =
       this.db.get(
         'SELECT count(DISTINCT species_id) AS c FROM pets WHERE user_id = ?',

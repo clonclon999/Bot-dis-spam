@@ -38,6 +38,8 @@ export class GameDatabase {
     this._writeChain = Promise.resolve();
     /** @type {Map<string, any>} */
     this.settingsCache = new Map();
+    /** @type {Map<string, string>} Khóa `${guildId}:${gameId}` -> `channelId` */
+    this.gameChannelsCache = new Map();
   }
 
   async init() {
@@ -94,6 +96,64 @@ export class GameDatabase {
         }
       }
     });
+
+    this.gameChannelsCache.clear();
+    const chanRows = this.all(
+      'SELECT guild_id, game_id, channel_id FROM guild_game_channels'
+    );
+    for (const r of chanRows) {
+      this.gameChannelsCache.set(`${r.guild_id}:${r.game_id}`, r.channel_id);
+    }
+  }
+
+  /**
+   * Gán kênh chat bắt buộc cho một trò chơi cụ thể trong máy chủ.
+   */
+  setGameChannel(guildId, gameId, channelId, updatedBy = '') {
+    const gId = String(guildId);
+    const gmId = String(gameId);
+    const chId = String(channelId);
+    this.gameChannelsCache.set(`${gId}:${gmId}`, chId);
+    this.run(
+      `INSERT OR REPLACE INTO guild_game_channels (guild_id, game_id, channel_id, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [gId, gmId, chId, String(updatedBy), Date.now()]
+    );
+  }
+
+  /**
+   * Gỡ cấu hình kênh của một trò chơi trong máy chủ.
+   */
+  clearGameChannel(guildId, gameId) {
+    const gId = String(guildId);
+    const gmId = String(gameId);
+    this.gameChannelsCache.delete(`${gId}:${gmId}`);
+    this.run(
+      'DELETE FROM guild_game_channels WHERE guild_id = ? AND game_id = ?',
+      [gId, gmId]
+    );
+  }
+
+  /**
+   * Tra cứu O(1) kênh đã chỉ định cho `gameId` tại `guildId` (trả về `null` nếu chưa gán).
+   */
+  getGameChannel(guildId, gameId) {
+    if (!guildId || !gameId) return null;
+    return this.gameChannelsCache.get(`${guildId}:${gameId}`) ?? null;
+  }
+
+  /**
+   * Lấy toàn bộ bản đồ `gameId -> channelId` của một máy chủ.
+   */
+  getGuildGameChannels(guildId) {
+    const out = {};
+    const prefix = `${guildId}:`;
+    for (const [k, chId] of this.gameChannelsCache.entries()) {
+      if (k.startsWith(prefix)) {
+        out[k.slice(prefix.length)] = chId;
+      }
+    }
+    return out;
   }
 
   /**
@@ -388,6 +448,7 @@ export class GameDatabase {
       }
     }
 
+    this.db.run(SCHEMA_SQL);
     this._loadOrSeedSettings();
     this._dirty = true;
     await this.flush();

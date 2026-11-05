@@ -9,6 +9,7 @@ import {
   handleGameInteraction,
   sweepGameSessions,
 } from './games/index.js';
+import { handleNoituInteraction, noituCommand } from './games/noitu.js';
 import { PET_COMMANDS } from './pets/index.js';
 import { PROFILE_AND_CRIME_COMMANDS } from './profile/index.js';
 import { handleQuestInteraction, QUEST_COMMANDS } from './quests/index.js';
@@ -18,6 +19,7 @@ export const commands = [
   ...CORE_COMMANDS,
   ...ECONOMY_COMMANDS,
   ...GAME_COMMANDS,
+  noituCommand,
   ...QUEST_COMMANDS,
   ...SHOP_COMMANDS,
   ...PET_COMMANDS,
@@ -45,6 +47,7 @@ export async function routeComponentInteraction(interaction, context) {
   sweepPendingConfirmations();
 
   if (await handleGameInteraction(interaction, context)) return true;
+  if (await handleNoituInteraction(interaction, context)) return true;
   if (await handleQuestInteraction(interaction, context)) return true;
   if (await handleShopInteraction(interaction, context)) return true;
   if (await handleCoreInteraction(interaction, context)) return true;

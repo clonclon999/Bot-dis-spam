@@ -51,7 +51,12 @@ export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
     guess: true,
     race: true,
     rps: true,
+    noitu: true,
   },
+
+  // Thông số thưởng trò Nối Từ Tiếng Việt
+  noituTurnReward: 500,
+  noituWinBotReward: 15_000,
 
   // Kênh log chuyên biệt
   logChannels: {

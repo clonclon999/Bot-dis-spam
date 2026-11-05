@@ -105,7 +105,7 @@ async function main() {
   const requiredNames = [
     'help', 'menu', 'balance', 'daily', 'weekly', 'monthly', 'pay', 'top',
     'history', 'work', 'beg', 'deposit', 'withdraw', 'interest',
-    'baucua', 'taixiu', 'coinflip', 'guess', 'race', 'rps',
+    'baucua', 'taixiu', 'coinflip', 'guess', 'race', 'rps', 'noitu',
     'quest', 'shop', 'buy', 'inventory', 'use', 'sell', 'pet',
     'profile', 'rob', 'protect', 'bounty', 'wanted', 'event',
     'admin', 'owner', 'antispam',
