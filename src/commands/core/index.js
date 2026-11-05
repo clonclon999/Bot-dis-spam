@@ -45,11 +45,11 @@ const HELP_CATEGORIES = {
     ].join('\n'),
   },
   games: {
-    label: 'Games — Trò chơi & Nối Từ Tiếng Việt',
+    label: 'Games — Trò chơi & Nối Từ PRO',
     emoji: '🎲',
     title: '🎲 Danh Mục GAMES — Sòng Giải Trí Công Bằng (Đúng Kênh Riêng)',
     body: [
-      '• `/noitu start|skip|hint|top|stop` — **Nối Từ Tiếng Việt Đời Thường** (Cộng đồng PvP hoặc Đấu với Bot, không dùng từ Hán-Việt khó!).',
+      '• `/noitu lobby|create|join|start|surrender|stats|leaderboard|rules` — **Nối Từ Tiếng Việt PRO (Đấu đối kháng 2 người)** có đếm ngược 30s, xét từ cuối cùng & thưởng chuỗi thắng VNĐ!',
       '• `/baucua [bet] [mascot]` — Bầu Cua 6 linh vật (hỗ trợ cược nhiều cửa bằng Menu & Modal!).',
       '• `/taixiu [bet] [choice]` — Tài Xỉu 3 xúc xắc truyền thống + Thống kê cầu gần nhất.',
       '• `/coinflip <bet> <side>` — Tung đồng xu Sấp / Ngửa nhân đôi tiền thưởng.',
@@ -57,7 +57,7 @@ const HELP_CATEGORIES = {
       '• `/race <bet> <racer>` — Đua thú trực tiếp cập nhật đường đua thời gian thực.',
       '• `/rps <bet> [choice] [opponent]` — Oẳn Tù Tì đấu với Bot hoặc thách đấu PvP ăn tiền!',
       '',
-      '📍 *Lưu ý: Mỗi trò chơi chỉ hoạt động tại đúng kênh chat riêng do Admin chỉ định để giữ sạch đoạn chat!*',
+      '📍 *Lưu ý: Cả 7 trò chơi đều bắt buộc cài đặt và chơi tại đúng kênh chat riêng do Admin chỉ định!*',
     ].join('\n'),
   },
   quest: {
@@ -99,8 +99,9 @@ const HELP_CATEGORIES = {
     emoji: '🛡️',
     title: '🛡️ Danh Mục ADMIN PRO, KÊNH GAME, OWNER & ANTI-SPAM',
     body: [
-      '• `/admin game setchannel <game> <channel>` — **Chỉ định kênh chat riêng cho từng trò chơi** (hoặc dùng `/noitu channel` cho Nối Từ).',
+      '• `/admin game setchannel <game> <ch>` — **Chỉ định kênh chat bắt buộc cho từng trò chơi**.',
       '• `/admin game channels` • `/admin game clearchannel` — Xem hoặc gỡ kênh trò chơi.',
+      '• `/admin noitu reward|cooldown|timeout|enable|disable|addword` — Điều chỉnh thưởng VNĐ, thời gian & từ điển Nối Từ PRO.',
       '• `/admin system dashboard` — Bảng điều khiển tương tác toàn diện (Button + Select + Modal).',
       '• `/admin user|economy|quest|event|system ...` — Quản lý người chơi, tiền tệ, sao lưu SQLite.',
       '• `/owner ...` — Đặc quyền tối cao chỉ dành cho OWNER (`1243061570247069696`).',

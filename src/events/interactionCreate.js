@@ -10,38 +10,57 @@ import { buildFeedbackEmbed, COLORS } from '../utils/embeds.js';
 import { globalGuard } from '../utils/locks.js';
 import { logger, redactSecrets } from '../utils/logger.js';
 import { globalPanelCleaner } from '../utils/panelCleaner.js';
-import { hasBotRole, isHardcodedOwner } from '../utils/permissions.js';
+import { canManageAntiSpam, hasBotRole, isHardcodedOwner } from '../utils/permissions.js';
 
 const ALL_GAME_COMMAND_IDS = new Set(Object.values(GAME_IDS));
 
 /**
- * Kiểm tra xem lệnh trò chơi có đang được gọi ở ĐÚNG kênh chat riêng đã chỉ định trên Server hay không.
- * Trả về thông báo lỗi (chuỗi) nếu sai kênh / chưa gán kênh, hoặc `null` nếu hợp lệ.
+ * Xác định mã trò chơi từ Slash Command hoặc Component `customId` (nếu có).
+ */
+function resolveInteractionGameId(interaction) {
+  if (interaction.isChatInputCommand?.()) {
+    const cmd = interaction.commandName;
+    return ALL_GAME_COMMAND_IDS.has(cmd) ? cmd : null;
+  }
+  const customId = interaction.customId || '';
+  const prefix = customId.split(':')[0];
+  return ALL_GAME_COMMAND_IDS.has(prefix) ? prefix : null;
+}
+
+/**
+ * Bắt buộc 100% các trò chơi (`baucua`, `taixiu`, `coinflip`, `guess`, `race`, `rps`, `noitu`)
+ * đều phải cài đặt và chơi đúng kênh chat đã chỉ định trên Server để không gây loạn đoạn chat chung.
+ * Trả về chuỗi thông báo lỗi nếu chưa cài kênh / sai kênh, hoặc `null` nếu hợp lệ.
  */
 export function checkGameChannelRestriction(interaction, db) {
   if (!interaction?.guildId || !db) return null;
 
-  const cmdName = interaction.commandName;
-  if (!ALL_GAME_COMMAND_IDS.has(cmdName)) return null;
+  const gameId = resolveInteractionGameId(interaction);
+  if (!gameId) return null;
 
-  // Cho phép Admin/Owner gọi `/noitu channel` hoặc `/noitu addword` ở mọi kênh để cấu hình
-  if (cmdName === GAME_IDS.NOITU) {
-    const sub = interaction.options?.getSubcommand?.(false);
-    if (sub === 'channel' || sub === 'addword') return null;
-  }
+  const allowedChannels = db.getAllowedGameChannels(interaction.guildId, gameId);
+  const label = GAME_LABELS[gameId] ?? gameId;
 
-  const assignedChannelId = db.getGameChannel(interaction.guildId, cmdName);
-  const label = GAME_LABELS[cmdName] ?? cmdName;
-
-  if (!assignedChannelId) {
-    const isAdmin = hasBotRole(db, interaction.user.id, BOT_ROLES.ADMIN);
+  if (allowedChannels.length === 0) {
+    const isAdmin =
+      hasBotRole(db, interaction.user.id, BOT_ROLES.ADMIN) ||
+      canManageAntiSpam(interaction.member, false);
     return isAdmin
-      ? `📍 Trò chơi **${label}** chưa được gắn kênh riêng trên Server này!\n👉 Hãy dùng lệnh \`/admin game setchannel\` (hoặc \`/noitu channel\` cho Nối Từ) để chọn kênh chơi cố định tránh làm lộn xộn đoạn chat.`
-      : `📍 Trò chơi **${label}** hiện chưa được Quản trị viên chỉ định kênh chơi riêng trên Server này. Vui lòng nhờ Admin cài kênh trước nhé!`;
+      ? `📍 Trò chơi **${label}** chưa được cài đặt kênh riêng trên Server này!\n👉 Hãy dùng lệnh \`/admin game setchannel\` để gán kênh chơi cố định tránh làm loạn kênh chat chung.`
+      : `📍 Trò chơi **${label}** hiện chưa được Quản trị viên chỉ định kênh chơi riêng trên Server này. Vui lòng nhờ Admin dùng \`/admin game setchannel\` cài kênh trước nhé!`;
   }
 
-  if (assignedChannelId !== interaction.channelId) {
-    return `⛔ **Sai kênh trò chơi!** Trò **${label}** chỉ được phép chơi tại kênh <#${assignedChannelId}> để giữ gọn đoạn chat chung.\n👉 Hãy nhấn vào <#${assignedChannelId}> để chơi nhé!`;
+  const parentId = interaction.channel?.parentId ?? null;
+  const ok = db.isAllowedGameChannel(
+    interaction.guildId,
+    gameId,
+    interaction.channelId,
+    parentId
+  );
+
+  if (!ok) {
+    const mentions = allowedChannels.map((id) => `<#${id}>`).join(', ');
+    return `⛔ **Sai kênh trò chơi!** Trò **${label}** chỉ được phép chơi tại kênh ${mentions} để giữ trật tự đoạn chat.\n👉 Hãy chuyển sang ${mentions} để tham gia nhé!`;
   }
 
   return null;
@@ -50,12 +69,9 @@ export function checkGameChannelRestriction(interaction, db) {
 /**
  * Bộ định tuyến tổng cho mọi tương tác Discord (`Slash Command`, `Button`, `Select Menu`, `Modal`):
  * - Kiểm tra chế độ Bảo trì (`maintenanceMode`) & Tài khoản bị khóa (`is_banned`).
- * - Bắt buộc mỗi trò chơi phải chơi đúng kênh đã cài đặt (`checkGameChannelRestriction`).
- * - Tự động xóa bảng cũ khi mở bảng mới (`globalPanelCleaner`) giúp đoạn chat luôn sạch gọn.
+ * - Bắt buộc mọi trò chơi đều phải chơi đúng kênh đã cài đặt (`checkGameChannelRestriction`).
+ * - Tự động xóa bảng cũ khi mở bảng mới (`globalPanelCleaner`) giữ kênh chat gọn gàng.
  * - Khóa đồng bộ theo từng người dùng (`ConcurrencyGuard`) chống Race Condition / Spam click.
- *
- * @param {import('discord.js').Interaction} interaction
- * @param {object} context
  */
 export async function handleInteractionCreate(interaction, context) {
   if (!interaction?.user || interaction.user.bot) return;
@@ -107,22 +123,20 @@ export async function handleInteractionCreate(interaction, context) {
     }
   }
 
-  // 3. Bắt buộc đúng kênh chat riêng cho từng trò chơi (phản hồi Ephemeral không làm bẩn kênh chung)
-  if (isChatCmd) {
-    const channelErr = checkGameChannelRestriction(interaction, db);
-    if (channelErr) {
-      await safeReply(interaction, {
-        embeds: [
-          buildFeedbackEmbed({
-            color: COLORS.WARNING,
-            title: '📍 Yêu Cầu Đúng Kênh Trò Chơi',
-            description: channelErr,
-          }),
-        ],
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
+  // 3. Bắt buộc 100% các trò chơi (cả lệnh lẫn nút bấm) chỉ hoạt động đúng kênh riêng đã cài đặt
+  const channelErr = checkGameChannelRestriction(interaction, db);
+  if (channelErr) {
+    await safeReply(interaction, {
+      embeds: [
+        buildFeedbackEmbed({
+          color: COLORS.WARNING,
+          title: '📍 Yêu Cầu Đúng Kênh Trò Chơi',
+          description: channelErr,
+        }),
+      ],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
   }
 
   // 4. Giới hạn tốc độ thao tác chống spam liên thanh (Rate Limit 650ms)
@@ -141,10 +155,20 @@ export async function handleInteractionCreate(interaction, context) {
       const command = COMMAND_MAP.get(interaction.commandName);
       if (!command) return;
       await command.execute(interaction, context);
-      await globalPanelCleaner.captureInteractionReply(
-        interaction,
-        interaction.commandName
-      );
+
+      // Các bảng phòng đấu 2 người của Nối Từ tự quản lý vòng đời chỉnh sửa tại chỗ riêng
+      const isLiveNoituRoomBoard =
+        interaction.commandName === GAME_IDS.NOITU &&
+        ['create', 'join', 'start', 'surrender'].includes(
+          interaction.options?.getSubcommand?.(false)
+        );
+
+      if (!isLiveNoituRoomBoard) {
+        await globalPanelCleaner.captureInteractionReply(
+          interaction,
+          interaction.commandName
+        );
+      }
       return;
     }
     await routeComponentInteraction(interaction, context);

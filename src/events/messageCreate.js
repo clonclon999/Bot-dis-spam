@@ -1,19 +1,25 @@
-import { EmbedBuilder } from 'discord.js';
+import {
+  buildInvalidWordEmbed,
+  buildValidTurnPayload,
+  buildVictoryPayload,
+  cleanupRoomFeedbackMessage,
+} from '../commands/games/noitu.js';
 import { GAME_IDS } from '../config/constants.js';
 import { evaluateExemption } from '../services/whitelistService.js';
-import { COLORS } from '../utils/embeds.js';
-import { formatVnd } from '../utils/format.js';
+import { ConcurrencyGuard } from '../utils/locks.js';
 import { logger } from '../utils/logger.js';
-import { globalPanelCleaner } from '../utils/panelCleaner.js';
 
 /** Bộ đệm thời gian nhận EXP trò chuyện để tránh ghi SQLite liên tục khi chat nhanh */
 const chatExpCooldowns = new Map();
 const CHAT_EXP_INTERVAL_MS = 60_000;
 
+/** Khóa tuần tự theo từng phòng Nối Từ để chống 2 người gửi tin nhắn cùng 1 mili-giây gây đua Embed */
+const noituRoomGuard = new ConcurrencyGuard();
+
 /**
  * Xử lý sự kiện tin nhắn mới (`messageCreate`):
  * 1. Thực thi lớp bảo vệ Anti-Spam `@Mention` trước tiên.
- * 2. Xử lý trò chơi Nối Từ Tiếng Việt nếu tin nhắn nằm đúng trong kênh `#nối-từ` đã chỉ định.
+ * 2. Xử lý lượt đấu Nối Từ Tiếng Việt PRO nếu tin nhắn nằm đúng trong kênh Nối Từ đã cài đặt.
  * 3. Cộng nhẹ EXP tương tác định kỳ (mỗi 60s/người).
  */
 export async function handleMessageCreate(message, context) {
@@ -54,27 +60,41 @@ export async function handleMessageCreate(message, context) {
 
     if (message.author?.bot) return;
 
-    // Bước 2: Xử lý trò Nối Từ Tiếng Việt (CHỈ hoạt động tại đúng kênh Nối Từ đã cài đặt)
-    if (db && wordChainSystem && !db.getSetting('maintenanceMode')) {
-      const assignedNoituChan = db.getGameChannel(
+    // Bước 2: Xử lý Trò Chơi Nối Từ Tiếng Việt PRO (CHỈ hoạt động tại đúng kênh Nối Từ đã cài đặt)
+    if (db && wordChainSystem && !db.getSetting('maintenanceMode') && wordChainSystem.isEnabled()) {
+      const parentId = message.channel?.parentId ?? null;
+      const isNoituChannel = db.isAllowedGameChannel(
         message.guild.id,
-        GAME_IDS.NOITU
+        GAME_IDS.NOITU,
+        message.channel?.id,
+        parentId
       );
-      if (assignedNoituChan && message.channel?.id === assignedNoituChan) {
-        const userRow = db.get('SELECT is_banned FROM users WHERE user_id = ?', [
-          message.author.id,
-        ]);
-        if (!userRow?.is_banned) {
-          const turn = wordChainSystem.submitWord({
-            guildId: message.guild.id,
-            channelId: message.channel.id,
-            userId: message.author.id,
-            username: message.author.username,
-            content: message.content,
-          });
 
-          if (turn) {
-            await renderWordChainOutcome(message, turn);
+      if (isNoituChannel) {
+        const activeRoom = wordChainSystem.getPlayerActiveRoom(message.author.id);
+        if (
+          activeRoom &&
+          activeRoom.status === 'playing' &&
+          activeRoom.channelId === String(message.channel.id)
+        ) {
+          const userRow = db.get('SELECT is_banned FROM users WHERE user_id = ?', [
+            message.author.id,
+          ]);
+          if (!userRow?.is_banned) {
+            await noituRoomGuard.runExclusive(activeRoom.roomId, async () => {
+              activeRoom.channelRef = message.channel;
+              const turnResult = wordChainSystem.submitTurnMessage({
+                guildId: message.guild.id,
+                channelId: message.channel.id,
+                userId: message.author.id,
+                username: message.author.username,
+                content: message.content,
+              });
+
+              if (turnResult) {
+                await renderNoituProTurn(message, turnResult, wordChainSystem);
+              }
+            });
             return;
           }
         }
@@ -106,109 +126,86 @@ export async function handleMessageCreate(message, context) {
 }
 
 /**
- * Hiển thị phản hồi Nối Từ siêu gọn gàng:
- * - Nhắc lỗi tự xóa sau 4 giây.
- * - Phản hồi lượt của Bot tự động xóa thẻ lượt cũ trước đó để kênh luôn sạch đẹp.
+ * Hiển thị phản hồi từng lượt Nối Từ bằng Embed chuyên nghiệp và chỉnh sửa tại chỗ chống spam:
+ * - Lượt đúng & tiếp diễn: Xóa cảnh báo lỗi cũ (nếu có) và CHỈNH SỬA trực tiếp Embed bàn đấu hiện tại (`🟢 NỐI TỪ – HỢP LỆ!`).
+ * - Chiến thắng (hết từ nối tiếp / hết giờ): CHỈNH SỬA Embed bàn đấu sang `🏆 CHÚC MỪNG! BẠN ĐÃ CHIẾN THẮNG!`.
+ * - Từ sai / từ đã dùng / sai lượt: Hiển thị Embed `🔴 TỪ KHÔNG HỢP LỆ!` hoặc `⚠️ TỪ ĐÃ ĐƯỢC SỬ DỤNG!` (tái sử dụng khung cảnh báo của phòng để không spam tin nhắn).
  */
-async function renderWordChainOutcome(message, turn) {
+async function renderNoituProTurn(message, turnResult, wordChainSystem) {
   const channel = message.channel;
+  const room = turnResult.room;
 
-  if (!turn.ok) {
-    if (typeof message.react === 'function') {
-      await message.react('❌').catch(() => {});
+  // Trường hợp trận đấu vừa kết thúc (do hết từ trong từ điển hoặc vừa chạm mốc hết giờ)
+  if (turnResult.finished && turnResult.outcome) {
+    await cleanupRoomFeedbackMessage(room);
+    const victoryPayload = buildVictoryPayload(turnResult.outcome);
+
+    if (room?.boardMessage && typeof room.boardMessage.edit === 'function') {
+      const edited = await room.boardMessage
+        .edit({ content: null, ...victoryPayload })
+        .catch(() => null);
+      if (edited) return;
     }
+
     if (typeof channel?.send === 'function') {
-      const warnMsg = await channel
-        .send({
-          content: `⚠️ <@${message.author.id}> ${turn.reason}`,
-          allowedMentions: { users: [message.author.id] },
-        })
-        .catch(() => null);
+      await channel.send(victoryPayload).catch(() => {});
+    }
+    return;
+  }
 
-      if (warnMsg && typeof warnMsg.delete === 'function') {
-        const timer = setTimeout(() => {
-          warnMsg.delete().catch(() => {});
-        }, 4_500);
-        timer.unref?.();
+  // Trường hợp trả lời sai / từ đã dùng / sai lượt -> Gửi hoặc chỉnh sửa tại chỗ Embed cảnh báo
+  if (!turnResult.ok) {
+    const errEmbed = buildInvalidWordEmbed({
+      code: turnResult.code,
+      word: turnResult.word,
+      requiredPrefix: turnResult.requiredPrefix,
+      remainingSec: turnResult.remainingSec,
+      currentTurnUserId: turnResult.currentTurnUserId ?? room?.currentTurnUserId,
+    });
+
+    const payload = {
+      content: `<@${message.author.id}>`,
+      embeds: [errEmbed],
+      allowedMentions: { users: [message.author.id] },
+    };
+
+    if (room?.feedbackMessage && typeof room.feedbackMessage.edit === 'function') {
+      const edited = await room.feedbackMessage.edit(payload).catch(() => null);
+      if (edited) return;
+    }
+
+    if (typeof channel?.send === 'function') {
+      const sent = await channel.send(payload).catch(() => null);
+      if (room && sent) {
+        room.feedbackMessage = sent;
       }
     }
     return;
   }
 
-  // Nối đúng -> Thả cảm xúc ✅
-  if (typeof message.react === 'function') {
-    await message.react('✅').catch(() => {});
+  // Trường hợp nối từ HỢP LỆ và chuyển sang lượt tiếp theo -> Chỉnh sửa Embed hiện tại của bàn đấu!
+  await cleanupRoomFeedbackMessage(room);
+
+  const validPayload = buildValidTurnPayload({
+    room,
+    playerUserId: turnResult.playerUserId,
+    acceptedWord: turnResult.acceptedWord,
+    nextPrefix: turnResult.nextPrefix,
+    nextTurnUserId: turnResult.nextTurnUserId,
+    timeoutSec: turnResult.timeoutSec,
+  });
+
+  if (room?.boardMessage && typeof room.boardMessage.edit === 'function') {
+    const edited = await room.boardMessage
+      .edit({ content: null, ...validPayload })
+      .catch(() => null);
+    if (edited) return;
   }
 
-  if (typeof channel?.send !== 'function') return;
-
-  // Chế độ Đấu với Bot
-  if (turn.mode === 'bot') {
-    if (turn.roundWon) {
-      const winMsg = await channel
-        .send({
-          embeds: [
-            new EmbedBuilder()
-              .setColor(COLORS.SUCCESS)
-              .setTitle('🏆 ĐỈNH CAO! BẠN ĐÃ HẠ GỤC BOT NỐI TỪ!')
-              .setDescription(
-                `<@${message.author.id}> tung từ **\`${turn.playerWord}\`** khiến Bot bí từ hoàn toàn và nhận thưởng **+${formatVnd(turn.prizeVnd)}**!\n\n` +
-                  `🔄 **Ván mới bắt đầu ngay:** \` ${turn.newStarterWord.toUpperCase()} \`\n` +
-                  `👉 Tiếp theo bắt đầu bằng chữ: **\`${turn.nextSyllable}\`**`
-              ),
-          ],
-          allowedMentions: { users: [message.author.id] },
-        })
-        .catch(() => null);
-
-      if (winMsg) {
-        await globalPanelCleaner.registerChannelBoard(channel.id, 'noitu_bot_turn', winMsg);
-      }
-      return;
-    }
-
-    const desc = turn.autoResetStarter
-      ? `🤖 Bot đáp: **\`${turn.botWord}\`** *(Hết nhánh nối tiếp — Thưởng hòa hữu nghị **+${formatVnd(turn.earnedVnd)}**!)*\n🔄 **Đổi từ mới:** \` ${turn.autoResetStarter.toUpperCase()} \` ➔ Bắt đầu bằng chữ: **\`${turn.nextSyllable}\`**`
-      : `🤖 Bot nối tiếp: **\`${turn.botWord}\`** *(+${formatVnd(turn.earnedVnd)} cho <@${message.author.id}>)*\n👉 Mời nối tiếp bắt đầu bằng chữ: **\`${turn.nextSyllable}\`** *(Chuỗi: ${turn.chainLength})*`;
-
-    const botTurnMsg = await channel
-      .send({
-        embeds: [new EmbedBuilder().setColor(0x2ecc71).setDescription(desc)],
-        allowedMentions: { parse: [] },
-      })
-      .catch(() => null);
-
-    // Xóa ngay thẻ phản hồi lượt trước của Bot để kênh #nối-từ chỉ hiện đúng 1 bảng gợi ý mới nhất!
-    if (botTurnMsg) {
-      await globalPanelCleaner.registerChannelBoard(
-        channel.id,
-        'noitu_bot_turn',
-        botTurnMsg
-      );
-    }
-    return;
-  }
-
-  // Chế độ Cộng đồng PvP: chỉ gửi bảng thông báo khi có người nổ Hũ kết thúc ván (các lượt giữa chỉ thả ✅ siêu gọn!)
-  if (turn.roundWon) {
-    const potMsg = await channel
-      .send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0xf1c40f)
-            .setTitle('🎉 NỔ HŨ NỐI TỪ CỘNG ĐỒNG!')
-            .setDescription(
-              `<@${message.author.id}> đã khóa sổ chuỗi **${turn.endedChain} từ** bằng từ khóa **\`${turn.playerWord}\`** và ẵm trọn **+${formatVnd(turn.prizeVnd)}**!\n\n` +
-                `🔄 **Ván mới bắt đầu:** \` ${turn.newStarterWord.toUpperCase()} \`\n` +
-                `👉 Hãy nối tiếp bằng chữ: **\`${turn.nextSyllable}\`**`
-            ),
-        ],
-        allowedMentions: { users: [message.author.id] },
-      })
-      .catch(() => null);
-
-    if (potMsg) {
-      await globalPanelCleaner.registerChannelBoard(channel.id, 'noitu_bot_turn', potMsg);
+  if (typeof channel?.send === 'function') {
+    const sent = await channel.send(validPayload).catch(() => null);
+    if (room && sent) {
+      wordChainSystem.attachBoardMessage(room.roomId, sent);
     }
   }
 }

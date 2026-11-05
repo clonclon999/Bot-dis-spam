@@ -1,3 +1,4 @@
+import { registerNoituUiHooks } from '../commands/games/noitu.js';
 import { GameDatabase } from '../database/db.js';
 import { MentionDetector } from '../services/mentionDetector.js';
 import { PunishmentService } from '../services/punishmentService.js';
@@ -63,6 +64,7 @@ export async function createBotSystems(dataDir) {
     questSystem,
     eventSystem,
   });
+  registerNoituUiHooks(wordChainSystem);
 
   // Liên kết phụ thuộc hai chiều sạch sẽ
   levelSystem.bindSystems({ petSystem, questSystem, eventSystem });

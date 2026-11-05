@@ -37,11 +37,6 @@ const GAME_CHOICES = Object.entries(GAME_LABELS).map(([val, name]) => ({
   value: val,
 }));
 
-const GAME_CHANNEL_CHOICES = [
-  ...GAME_CHOICES,
-  { name: '🎯 Tất cả 6 trò đặt cược (trừ Nối Từ)', value: 'all_betting' },
-];
-
 const EVENT_CHOICES = [
   { name: '💰 Đua Top Người Giàu', value: EVENT_TYPES.RICH_RACE },
   { name: '⭐ Đua Top Cấp Độ', value: EVENT_TYPES.LEVEL_RACE },
@@ -259,41 +254,77 @@ export const adminCommand = {
         .addSubcommand((s) => s.setName('inflation').setDescription('Phân tích cung tiền & lạm phát'))
     )
 
-    // Nhóm 3: Quản lý trò chơi (5 lệnh)
+    // Nhóm 3: Quản lý trò chơi & kênh riêng từng game (8 lệnh)
     .addSubcommandGroup((g) =>
       g
         .setName('game')
-        .setDescription('Quản lý trạng thái và thống kê trò chơi')
+        .setDescription('Quản lý trạng thái và kênh riêng từng trò chơi')
         .addSubcommand((s) =>
-          s.setName('enable').setDescription('Mở lại trò chơi').addStringOption((o) => o.setName('game').setDescription('Trò chơi').setRequired(true).addChoices(...GAME_CHOICES))
+          s.setName('enable').setDescription('Mở trò chơi').addStringOption((o) => o.setName('game').setDescription('Trò chơi').setRequired(true).addChoices(...GAME_CHOICES))
         )
         .addSubcommand((s) =>
-          s.setName('disable').setDescription('Tạm khóa trò chơi').addStringOption((o) => o.setName('game').setDescription('Trò chơi').setRequired(true).addChoices(...GAME_CHOICES))
+          s.setName('disable').setDescription('Khóa trò chơi').addStringOption((o) => o.setName('game').setDescription('Trò chơi').setRequired(true).addChoices(...GAME_CHOICES))
         )
         .addSubcommand((s) =>
           s
             .setName('settings')
-            .setDescription('Xem hoặc chỉnh hệ số trả thưởng')
-            .addNumberOption((o) => o.setName('payout_mult').setDescription('Hệ số thưởng (0.5 - 3.0)').setMinValue(0.5).setMaxValue(3.0).setRequired(false))
+            .setDescription('Xem/chỉnh hệ số thưởng')
+            .addNumberOption((o) => o.setName('payout_mult').setDescription('Hệ số (0.5-3.0)').setMinValue(0.5).setMaxValue(3.0).setRequired(false))
         )
         .addSubcommand((s) =>
-          s.setName('resetstats').setDescription('Đặt lại thống kê thắng thua').addUserOption((o) => o.setName('u').setDescription('Người chơi').setRequired(true))
+          s.setName('resetstats').setDescription('Xóa thống kê thắng thua').addUserOption((o) => o.setName('u').setDescription('Người chơi').setRequired(true))
         )
-        .addSubcommand((s) => s.setName('leaderboard').setDescription('Top cao thủ thắng nhiều trận nhất'))
+        .addSubcommand((s) => s.setName('leaderboard').setDescription('Top thắng trận nhiều nhất'))
         .addSubcommand((s) =>
           s
             .setName('setchannel')
-            .setDescription('Chỉ định kênh riêng cho từng trò chơi')
-            .addStringOption((o) => o.setName('game').setDescription('Trò chơi').setRequired(true).addChoices(...GAME_CHANNEL_CHOICES))
-            .addChannelOption((o) => o.setName('ch').setDescription('Kênh văn bản').addChannelTypes(ChannelType.GuildText).setRequired(true))
+            .setDescription('Gán kênh bắt buộc cho từng trò chơi')
+            .addStringOption((o) => o.setName('game').setDescription('Trò chơi').setRequired(true).addChoices(...GAME_CHOICES))
+            .addChannelOption((o) => o.setName('ch').setDescription('Kênh chat').addChannelTypes(ChannelType.GuildText).setRequired(true))
         )
         .addSubcommand((s) =>
           s
             .setName('clearchannel')
             .setDescription('Gỡ kênh của trò chơi')
-            .addStringOption((o) => o.setName('game').setDescription('Trò chơi').setRequired(true).addChoices(...GAME_CHANNEL_CHOICES))
+            .addStringOption((o) => o.setName('game').setDescription('Trò chơi').setRequired(true).addChoices(...GAME_CHOICES))
         )
-        .addSubcommand((s) => s.setName('channels').setDescription('Xem danh sách kênh đã gán cho các trò chơi'))
+        .addSubcommand((s) => s.setName('channels').setDescription('Xem kênh riêng của từng trò chơi'))
+    )
+
+    // Nhóm 4: Quản lý chuyên biệt Nối Từ Tiếng Việt PRO (6 lệnh)
+    .addSubcommandGroup((g) =>
+      g
+        .setName('noitu')
+        .setDescription('Cấu hình thưởng, thời gian và trạng thái Nối Từ PRO')
+        .addSubcommand((s) =>
+          s
+            .setName('reward')
+            .setDescription('Chỉnh thưởng thắng Nối Từ VNĐ')
+            .addIntegerOption((o) => o.setName('amount').setDescription('VNĐ thắng 1 trận').setMinValue(0).setRequired(true))
+            .addIntegerOption((o) => o.setName('s3').setDescription('Thưởng thêm chuỗi 3').setMinValue(0).setRequired(false))
+            .addIntegerOption((o) => o.setName('s5').setDescription('Thưởng thêm chuỗi 5').setMinValue(0).setRequired(false))
+            .addIntegerOption((o) => o.setName('s10').setDescription('Thưởng thêm chuỗi 10').setMinValue(0).setRequired(false))
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('cooldown')
+            .setDescription('Đặt thời gian chờ giữa các trận (giây)')
+            .addIntegerOption((o) => o.setName('seconds').setDescription('Số giây (0-3600)').setMinValue(0).setMaxValue(3600).setRequired(true))
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('timeout')
+            .setDescription('[OWNER] Chỉnh thời gian mỗi lượt nối từ')
+            .addIntegerOption((o) => o.setName('seconds').setDescription('Số giây (10-300)').setMinValue(10).setMaxValue(300).setRequired(true))
+        )
+        .addSubcommand((s) => s.setName('enable').setDescription('Bật trò chơi Nối Từ'))
+        .addSubcommand((s) => s.setName('disable').setDescription('Tạm tắt trò chơi Nối Từ'))
+        .addSubcommand((s) =>
+          s
+            .setName('addword')
+            .setDescription('Thêm từ ghép 2 tiếng mới vào từ điển')
+            .addStringOption((o) => o.setName('word').setDescription('Từ ghép 2 tiếng').setRequired(true))
+        )
     )
 
     // Nhóm 4: Quản lý nhiệm vụ (4 lệnh)
@@ -389,7 +420,7 @@ export const adminCommand = {
     ),
 
   async execute(interaction, ctx) {
-    const { db, economySystem, shopSystem, questSystem, eventSystem } = ctx;
+    const { db, economySystem, shopSystem, questSystem, eventSystem, wordChainSystem } = ctx;
     const actorId = interaction.user.id;
     const actorRole = resolveBotRole(db, actorId);
 
@@ -419,7 +450,8 @@ export const adminCommand = {
     // Bảo vệ các lệnh chỉ dành riêng cho OWNER trong /admin
     const ownerOnlyInAdmin =
       (group === 'system' && ['maintenance', 'restore'].includes(sub)) ||
-      (group === 'economy' && ['setinterest'].includes(sub));
+      (group === 'economy' && ['setinterest'].includes(sub)) ||
+      (group === 'noitu' && ['timeout'].includes(sub));
 
     if (ownerOnlyInAdmin && !isHardcodedOwner(actorId)) {
       await interaction.reply({
@@ -727,14 +759,8 @@ export const adminCommand = {
         }
         const gameOpt = interaction.options.getString('game', true);
         const targetCh = interaction.options.getChannel('ch', true);
-        const targetGames =
-          gameOpt === 'all_betting'
-            ? Object.values(GAME_IDS).filter((id) => id !== GAME_IDS.NOITU)
-            : [gameOpt];
 
-        for (const gId of targetGames) {
-          db.setGameChannel(interaction.guildId, gId, targetCh.id, actorId);
-        }
+        db.setGameChannel(interaction.guildId, gameOpt, targetCh.id, actorId);
         db.recordAudit({
           actorId,
           actorRole,
@@ -742,12 +768,8 @@ export const adminCommand = {
           details: `${gameOpt}=${targetCh.id}`,
         });
 
-        const label =
-          gameOpt === 'all_betting'
-            ? 'Tất cả 6 trò đặt cược (trừ Nối Từ)'
-            : GAME_LABELS[gameOpt];
         await interaction.reply({
-          content: `✅ Đã chỉ định kênh <#${targetCh.id}> cho **${label}**! Từ nay người chơi bắt buộc vào đúng <#${targetCh.id}> mới chơi được.`,
+          content: `✅ Đã chỉ định kênh riêng <#${targetCh.id}> cho trò chơi **${GAME_LABELS[gameOpt]}**! Người chơi bắt buộc vào đúng <#${targetCh.id}> mới được mở bàn chơi.`,
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -758,14 +780,7 @@ export const adminCommand = {
           throw new Error('Lệnh này chỉ dùng bên trong Máy chủ (Server).');
         }
         const gameOpt = interaction.options.getString('game', true);
-        const targetGames =
-          gameOpt === 'all_betting'
-            ? Object.values(GAME_IDS).filter((id) => id !== GAME_IDS.NOITU)
-            : [gameOpt];
-
-        for (const gId of targetGames) {
-          db.clearGameChannel(interaction.guildId, gId);
-        }
+        db.clearGameChannel(interaction.guildId, gameOpt);
         db.recordAudit({
           actorId,
           actorRole,
@@ -773,7 +788,7 @@ export const adminCommand = {
           details: gameOpt,
         });
         await interaction.reply({
-          content: `🗑️ Đã gỡ cấu hình kênh của **${gameOpt === 'all_betting' ? '6 trò đặt cược' : GAME_LABELS[gameOpt]}**.`,
+          content: `🗑️ Đã gỡ cấu hình kênh của **${GAME_LABELS[gameOpt]}**.`,
           flags: MessageFlags.Ephemeral,
         });
         return;
@@ -783,10 +798,13 @@ export const adminCommand = {
         if (!interaction.guildId) {
           throw new Error('Lệnh này chỉ dùng bên trong Máy chủ (Server).');
         }
-        const chanMap = db.getGuildGameChannels(interaction.guildId);
         const lines = Object.entries(GAME_LABELS).map(([gId, gLabel]) => {
-          const chId = chanMap[gId];
-          return `• ${gLabel}: ${chId ? `<#${chId}>` : '*⚠️ Chưa gán kênh (Đang khóa)*'}`;
+          const allowed = db.getAllowedGameChannels(interaction.guildId, gId);
+          return `• ${gLabel}: ${
+            allowed.length > 0
+              ? allowed.map((id) => `<#${id}>`).join(', ')
+              : '*⚠️ Chưa gán kênh (Đang khóa)*'
+          }`;
         });
         await interaction.reply({
           embeds: [
@@ -795,9 +813,87 @@ export const adminCommand = {
               .setTitle('📍 Danh Sách Kênh Riêng Cho Từng Trò Chơi')
               .setDescription(
                 lines.join('\n') +
-                  '\n\n💡 *Dùng `/admin game setchannel` để gán từng trò vào đúng kênh chat riêng biệt.*'
+                  '\n\n💡 *Mọi trò chơi đều bắt buộc gán kênh riêng bằng `/admin game setchannel` để tránh gây loạn kênh chat chung.*'
               ),
           ],
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+    }
+
+    // --- Xử lý nhóm NOITU (Mục 8) ---
+    if (group === 'noitu') {
+      if (sub === 'reward') {
+        const amount = interaction.options.getInteger('amount', true);
+        const s3 = interaction.options.getInteger('s3');
+        const s5 = interaction.options.getInteger('s5');
+        const s10 = interaction.options.getInteger('s10');
+
+        db.setSetting('noituReward', amount);
+        if (s3 !== null) db.setSetting('noituStreak3Bonus', s3);
+        if (s5 !== null) db.setSetting('noituStreak5Bonus', s5);
+        if (s10 !== null) db.setSetting('noituStreak10Bonus', s10);
+
+        const cfg = wordChainSystem.getConfig();
+        db.recordAudit({
+          actorId,
+          actorRole,
+          action: 'noitu_reward',
+          details: `base=${cfg.baseReward},s3=${cfg.streak3Bonus},s5=${cfg.streak5Bonus},s10=${cfg.streak10Bonus}`,
+        });
+
+        await interaction.reply({
+          content:
+            `✅ Đã cập nhật mức thưởng **Nối Từ Tiếng Việt PRO**:\n` +
+            `• Thắng 1 trận: **+${formatVnd(cfg.baseReward)}**\n` +
+            `• Chuỗi 3 trận: **+${formatVnd(cfg.streak3Bonus)}** | Chuỗi 5 trận: **+${formatVnd(cfg.streak5Bonus)}** | Chuỗi 10 trận: **+${formatVnd(cfg.streak10Bonus)}**`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (sub === 'cooldown') {
+        const seconds = interaction.options.getInteger('seconds', true);
+        db.setSetting('noituCooldownSec', seconds);
+        db.recordAudit({ actorId, actorRole, action: 'noitu_cooldown', details: String(seconds) });
+        await interaction.reply({
+          content: `✅ Đã đặt thời gian chờ giữa các trận Nối Từ thành **${seconds} giây**.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (sub === 'timeout') {
+        const seconds = interaction.options.getInteger('seconds', true);
+        db.setSetting('noituTimeoutSec', seconds);
+        db.recordAudit({ actorId, actorRole, action: 'noitu_timeout', details: String(seconds) });
+        await interaction.reply({
+          content: `👑 Đã đặt thời gian suy nghĩ mỗi lượt Nối Từ thành **${seconds} giây**.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (sub === 'enable' || sub === 'disable') {
+        const on = sub === 'enable';
+        const cur = { ...(db.getSetting('gamesEnabled') || {}) };
+        cur[GAME_IDS.NOITU] = on;
+        db.setSetting('gamesEnabled', cur);
+        db.recordAudit({ actorId, actorRole, action: `noitu_${sub}` });
+        await interaction.reply({
+          content: `✅ Đã **${on ? 'BẬT' : 'TẠM TẮT'}** trò chơi **🔤 Nối Từ Tiếng Việt PRO**.`,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (sub === 'addword') {
+        const raw = interaction.options.getString('word', true);
+        const added = wordChainSystem.addCustomWord(raw, actorId);
+        db.recordAudit({ actorId, actorRole, action: 'noitu_addword', details: added });
+        await interaction.reply({
+          content: `✅ Đã bổ sung từ ghép **"${added}"** vào từ điển Nối Từ Tiếng Việt!`,
           flags: MessageFlags.Ephemeral,
         });
         return;

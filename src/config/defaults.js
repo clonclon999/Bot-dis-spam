@@ -54,9 +54,13 @@ export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
     noitu: true,
   },
 
-  // Thông số thưởng trò Nối Từ Tiếng Việt
-  noituTurnReward: 500,
-  noituWinBotReward: 15_000,
+  // Thông số thưởng & thời gian trò Nối Từ Tiếng Việt PRO
+  noituReward: 1_000,
+  noituStreak3Bonus: 1_000,
+  noituStreak5Bonus: 3_000,
+  noituStreak10Bonus: 10_000,
+  noituTimeoutSec: 30,
+  noituCooldownSec: 5,
 
   // Kênh log chuyên biệt
   logChannels: {

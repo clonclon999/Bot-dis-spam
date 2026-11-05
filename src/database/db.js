@@ -64,8 +64,22 @@ export class GameDatabase {
     }
 
     this.db.run(SCHEMA_SQL);
+    this._runSafeMigrations();
     this._loadOrSeedSettings();
     await this.flush();
+  }
+
+  _runSafeMigrations() {
+    try {
+      const cols = this.all('PRAGMA table_info(guild_game_channels)');
+      if (!cols.some((c) => c.name === 'extra_channels')) {
+        this.db.run(
+          "ALTER TABLE guild_game_channels ADD COLUMN extra_channels TEXT NOT NULL DEFAULT '[]'"
+        );
+      }
+    } catch {
+      // Bỏ qua nếu cột đã tồn tại
+    }
   }
 
   _loadOrSeedSettings() {
@@ -99,10 +113,20 @@ export class GameDatabase {
 
     this.gameChannelsCache.clear();
     const chanRows = this.all(
-      'SELECT guild_id, game_id, channel_id FROM guild_game_channels'
+      'SELECT guild_id, game_id, channel_id, extra_channels FROM guild_game_channels'
     );
     for (const r of chanRows) {
-      this.gameChannelsCache.set(`${r.guild_id}:${r.game_id}`, r.channel_id);
+      let extras = [];
+      try {
+        extras = JSON.parse(r.extra_channels || '[]');
+      } catch {
+        extras = [];
+      }
+      const set = new Set([String(r.channel_id), ...extras.map(String)].filter(Boolean));
+      this.gameChannelsCache.set(`${r.guild_id}:${r.game_id}`, {
+        primary: String(r.channel_id),
+        allowed: set,
+      });
     }
   }
 
@@ -113,11 +137,35 @@ export class GameDatabase {
     const gId = String(guildId);
     const gmId = String(gameId);
     const chId = String(channelId);
-    this.gameChannelsCache.set(`${gId}:${gmId}`, chId);
+    this.gameChannelsCache.set(`${gId}:${gmId}`, {
+      primary: chId,
+      allowed: new Set([chId]),
+    });
     this.run(
-      `INSERT OR REPLACE INTO guild_game_channels (guild_id, game_id, channel_id, updated_by, updated_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO guild_game_channels (guild_id, game_id, channel_id, extra_channels, updated_by, updated_at)
+       VALUES (?, ?, ?, '[]', ?, ?)`,
       [gId, gmId, chId, String(updatedBy), Date.now()]
+    );
+  }
+
+  /**
+   * Bổ sung thêm kênh phụ hợp lệ cho cùng một trò chơi (ví dụ nhiều phòng Nối Từ ở #nối-từ-1, #nối-từ-2).
+   */
+  addGameChannel(guildId, gameId, channelId, updatedBy = '') {
+    const gId = String(guildId);
+    const gmId = String(gameId);
+    const chId = String(channelId);
+    const cur = this.gameChannelsCache.get(`${gId}:${gmId}`);
+    if (!cur) {
+      this.setGameChannel(gId, gmId, chId, updatedBy);
+      return;
+    }
+    cur.allowed.add(chId);
+    const extras = [...cur.allowed].filter((id) => id !== cur.primary);
+    this.run(
+      `INSERT OR REPLACE INTO guild_game_channels (guild_id, game_id, channel_id, extra_channels, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [gId, gmId, cur.primary, JSON.stringify(extras), String(updatedBy), Date.now()]
     );
   }
 
@@ -135,22 +183,42 @@ export class GameDatabase {
   }
 
   /**
-   * Tra cứu O(1) kênh đã chỉ định cho `gameId` tại `guildId` (trả về `null` nếu chưa gán).
+   * Tra cứu O(1) kênh chính đã chỉ định cho `gameId` tại `guildId` (trả về `null` nếu chưa gán).
    */
   getGameChannel(guildId, gameId) {
     if (!guildId || !gameId) return null;
-    return this.gameChannelsCache.get(`${guildId}:${gameId}`) ?? null;
+    return this.gameChannelsCache.get(`${guildId}:${gameId}`)?.primary ?? null;
   }
 
   /**
-   * Lấy toàn bộ bản đồ `gameId -> channelId` của một máy chủ.
+   * Lấy danh sách tất cả ID kênh được phép chơi `gameId` tại `guildId`.
+   */
+  getAllowedGameChannels(guildId, gameId) {
+    if (!guildId || !gameId) return [];
+    const entry = this.gameChannelsCache.get(`${guildId}:${gameId}`);
+    return entry ? [...entry.allowed] : [];
+  }
+
+  /**
+   * Kiểm tra O(1) xem `channelId` (hoặc Thread con có `parentChannelId`) có phải kênh hợp lệ của `gameId` không.
+   */
+  isAllowedGameChannel(guildId, gameId, channelId, parentChannelId = null) {
+    const entry = this.gameChannelsCache.get(`${guildId}:${gameId}`);
+    if (!entry) return false;
+    if (channelId && entry.allowed.has(String(channelId))) return true;
+    if (parentChannelId && entry.allowed.has(String(parentChannelId))) return true;
+    return false;
+  }
+
+  /**
+   * Lấy toàn bộ bản đồ `gameId -> channelId` (hoặc danh sách kênh) của một máy chủ.
    */
   getGuildGameChannels(guildId) {
     const out = {};
     const prefix = `${guildId}:`;
-    for (const [k, chId] of this.gameChannelsCache.entries()) {
+    for (const [k, entry] of this.gameChannelsCache.entries()) {
       if (k.startsWith(prefix)) {
-        out[k.slice(prefix.length)] = chId;
+        out[k.slice(prefix.length)] = entry.primary;
       }
     }
     return out;
@@ -449,6 +517,7 @@ export class GameDatabase {
     }
 
     this.db.run(SCHEMA_SQL);
+    this._runSafeMigrations();
     this._loadOrSeedSettings();
     this._dirty = true;
     await this.flush();
@@ -473,6 +542,16 @@ export class GameDatabase {
       this.run(
         `DELETE FROM audit_logs WHERE id NOT IN (
            SELECT id FROM audit_logs ORDER BY id DESC LIMIT 2000
+         )`
+      );
+      this.run(
+        `DELETE FROM noitu_matches WHERE id NOT IN (
+           SELECT id FROM noitu_matches ORDER BY id DESC LIMIT 3000
+         )`
+      );
+      this.run(
+        `DELETE FROM noitu_rooms WHERE status NOT IN ('waiting', 'playing') AND room_id NOT IN (
+           SELECT room_id FROM noitu_rooms WHERE status NOT IN ('waiting', 'playing') ORDER BY created_at DESC LIMIT 3000
          )`
       );
     });

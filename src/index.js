@@ -53,6 +53,7 @@ async function bootstrap() {
     logger.info('Lifecycle', `Nhận tín hiệu ${signal}. Đang lưu dữ liệu SQLite an toàn...`);
 
     clearInterval(gcInterval);
+    systems.wordChainSystem?.shutdownCleanup?.();
 
     try {
       systems.db.pruneOldHistory();

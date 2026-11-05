@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS guild_game_channels (
   guild_id TEXT NOT NULL,
   game_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
+  extra_channels TEXT NOT NULL DEFAULT '[]',
   updated_by TEXT NOT NULL DEFAULT '',
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (guild_id, game_id)
@@ -204,4 +205,77 @@ CREATE TABLE IF NOT EXISTS wordchain_stats (
   total_vnd INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS noitu_rooms (
+  room_id TEXT PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  board_message_id TEXT DEFAULT NULL,
+  host_id TEXT NOT NULL,
+  host_name TEXT NOT NULL DEFAULT '',
+  guest_id TEXT DEFAULT NULL,
+  guest_name TEXT DEFAULT NULL,
+  invited_user_id TEXT DEFAULT NULL,
+  status TEXT NOT NULL CHECK(status IN ('waiting', 'playing', 'finished', 'cancelled', 'aborted_restart')),
+  current_turn_user_id TEXT DEFAULT NULL,
+  current_word TEXT DEFAULT NULL,
+  required_prefix TEXT DEFAULT NULL,
+  used_words_json TEXT NOT NULL DEFAULT '[]',
+  turn_count INTEGER NOT NULL DEFAULT 0,
+  turn_timeout_sec INTEGER NOT NULL DEFAULT 30,
+  turn_deadline_at INTEGER DEFAULT NULL,
+  winner_id TEXT DEFAULT NULL,
+  loser_id TEXT DEFAULT NULL,
+  end_reason TEXT DEFAULT NULL,
+  reward_vnd INTEGER NOT NULL DEFAULT 0,
+  streak_bonus_vnd INTEGER NOT NULL DEFAULT 0,
+  reward_paid INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER DEFAULT NULL,
+  ended_at INTEGER DEFAULT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_noitu_rooms_status ON noitu_rooms (status);
+CREATE INDEX IF NOT EXISTS idx_noitu_rooms_guild_chan ON noitu_rooms (guild_id, channel_id, status);
+
+CREATE TABLE IF NOT EXISTS noitu_matches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  room_id TEXT NOT NULL UNIQUE,
+  guild_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  player1_id TEXT NOT NULL,
+  player2_id TEXT NOT NULL,
+  winner_id TEXT DEFAULT NULL,
+  loser_id TEXT DEFAULT NULL,
+  end_reason TEXT NOT NULL,
+  total_turns INTEGER NOT NULL DEFAULT 0,
+  last_word TEXT DEFAULT NULL,
+  words_json TEXT NOT NULL DEFAULT '[]',
+  base_reward_vnd INTEGER NOT NULL DEFAULT 0,
+  streak_bonus_vnd INTEGER NOT NULL DEFAULT 0,
+  total_reward_vnd INTEGER NOT NULL DEFAULT 0,
+  winner_streak_after INTEGER NOT NULL DEFAULT 0,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_noitu_matches_time ON noitu_matches (ended_at DESC);
+
+CREATE TABLE IF NOT EXISTS noitu_stats (
+  user_id TEXT PRIMARY KEY,
+  username TEXT NOT NULL DEFAULT '',
+  total_matches INTEGER NOT NULL DEFAULT 0,
+  wins INTEGER NOT NULL DEFAULT 0,
+  losses INTEGER NOT NULL DEFAULT 0,
+  current_streak INTEGER NOT NULL DEFAULT 0,
+  best_streak INTEGER NOT NULL DEFAULT 0,
+  total_turns_played INTEGER NOT NULL DEFAULT 0,
+  total_vnd_earned INTEGER NOT NULL DEFAULT 0,
+  last_match_at INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_noitu_stats_wins ON noitu_stats (wins DESC, best_streak DESC);
+CREATE INDEX IF NOT EXISTS idx_noitu_stats_streak ON noitu_stats (best_streak DESC, wins DESC);
+CREATE INDEX IF NOT EXISTS idx_noitu_stats_active ON noitu_stats (total_matches DESC, wins DESC);
 `;

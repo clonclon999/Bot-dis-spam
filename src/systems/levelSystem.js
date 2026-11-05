@@ -171,12 +171,17 @@ export class LevelSystem {
       )?.c ?? 0;
     if (taixiuWins >= 15) tryAdd('cao_thu_tai_xiu');
 
-    const noituTurns =
+    const noituWins =
+      this.db.get(
+        'SELECT wins FROM noitu_stats WHERE user_id = ?',
+        [String(userId)]
+      )?.wins ?? 0;
+    const legacyTurns =
       this.db.get(
         'SELECT correct_turns FROM wordchain_stats WHERE user_id = ?',
         [String(userId)]
       )?.correct_turns ?? 0;
-    if (noituTurns >= 25) tryAdd('vua_noi_tu');
+    if (noituWins >= 10 || legacyTurns >= 25) tryAdd('vua_noi_tu');
 
     const petSpeciesCount =
       this.db.get(
