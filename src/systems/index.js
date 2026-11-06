@@ -108,18 +108,37 @@ export async function createBotSystems(dataDir) {
    * tự gửi lại bảng dạng CHỈ CHỮ để kênh không bị trống phiên.
    */
   const sendBoardWithFallback = async (targetChannel, payload, snapshot) => {
-    try {
-      return await targetChannel.send(payload);
-    } catch (err) {
-      const textOnly = buildMultiplayerBoardPayload(snapshot, systems, {
-        isEdit: true,
-        textOnly: true,
-      });
-      return targetChannel.send(textOnly).catch(() => null);
-    }
+    // Giới hạn thời gian cứng: kênh/Discord có treo thì cũng không được giữ pipeline chốt phiên.
+    const sent = await multiplayerRoundSystem._sendWithTimeout(targetChannel, payload, 10_000);
+    if (sent) return sent;
+    const textOnly = buildMultiplayerBoardPayload(snapshot, systems, {
+      isEdit: true,
+      textOnly: true,
+    });
+    return multiplayerRoundSystem._sendWithTimeout(targetChannel, textOnly, 6_000);
   };
 
   multiplayerRoundSystem.setBoardRenderer(async (snapshot, meta = {}) => {
+    // 📌 ĐĂNG BẢNG MỚI Ở CUỐI KÊNH sau khi đếm ngược 3-2-1 kết thúc (khóa sổ / công bố kết quả):
+    // người chơi không cần lướt lên trên để xem kết quả nữa. Bảng cũ được xoá để kênh gọn.
+    if (meta.postNew) {
+      const channel = await multiplayerRoundSystem._resolveRoundChannel(snapshot.round.channel_id);
+      if (channel && typeof channel.send === 'function') {
+        const freshPayload = buildMultiplayerBoardPayload(snapshot, systems, { isEdit: false });
+        // Giới hạn 8 giây: nếu Discord/kênh chậm quá thì bỏ qua việc đăng mới và chuyển sang
+        // sửa bảng cũ ngay, tuyệt đối không để kết quả bị treo chờ.
+        const newMsg = await multiplayerRoundSystem._sendWithTimeout(channel, freshPayload, 8_000);
+        if (newMsg) {
+          multiplayerRoundSystem.registerMessageRef(snapshot.round.round_id, newMsg);
+          if (meta.message && meta.message.id !== newMsg.id && typeof meta.message.delete === 'function') {
+            await meta.message.delete().catch(() => {});
+          }
+          return;
+        }
+      }
+      // Không lấy được kênh / gửi quá chậm -> quay về cách cũ (sửa tại chỗ) để kết quả vẫn hiển thị
+    }
+
     const msg = meta.message;
     if (!msg || typeof msg.edit !== 'function') return;
     const payload = buildMultiplayerBoardPayload(snapshot, systems, {

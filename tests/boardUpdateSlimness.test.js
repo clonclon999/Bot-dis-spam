@@ -169,4 +169,69 @@ describe('Cập Nhật Bảng Siêu Nhẹ — Không Tải Lại Ảnh Mỗi L�
       await fsp.rm(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('4. Sau khi đếm ngược 3-2-1 (khóa sổ), Bot ĐĂNG BẢNG KẾT QUẢ MỚI ở cuối kênh và xoá bảng cũ', async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'slim-postnew-'));
+    try {
+      const systems = await createBotSystems(tmpDir);
+      const mp = systems.multiplayerRoundSystem;
+      try {
+        systems.db.setGameChannel('g-post', GAME_IDS.BAUCUA, 'chan-post', '1243061570247069696');
+        const round = await mp.startRound({
+          guildId: 'g-post',
+          channelId: 'chan-post',
+          gameId: GAME_IDS.BAUCUA,
+          userId: 'p-post',
+        });
+        const roundId = round.round?.round_id || round.snapshot?.round?.round_id;
+
+        const sentPayloads = [];
+        let oldDeleted = false;
+        const oldBoard = { id: 'msg-old-board', edit: async () => {}, delete: async () => { oldDeleted = true; } };
+        const editedPayloads = [];
+        const newBoard = {
+          id: 'msg-new-result',
+          edit: async (payload) => { editedPayloads.push(payload); },
+          delete: async () => {},
+        };
+        mp.attachClient({
+          channels: {
+            cache: new Map([
+              [
+                'chan-post',
+                {
+                  id: 'chan-post',
+                  messages: { fetch: async () => null },
+                  send: async (payload) => {
+                    sentPayloads.push(payload);
+                    return newBoard;
+                  },
+                },
+              ],
+            ]),
+          },
+        });
+        mp.registerMessageRef(roundId, oldBoard);
+
+        await mp.finalizeRound(roundId, { skipAnimation: true });
+
+        assert.ok(sentPayloads.length >= 1, 'Phải đăng bảng kết quả MỚI xuống cuối kênh');
+        assert.equal(oldDeleted, true, 'Bảng cũ phải được xoá để kênh gọn');
+        assert.equal(mp.getMessageRef(roundId)?.id, 'msg-new-result', 'Bảng mới phải được ghi nhớ để cập nhật tiếp');
+        // Bảng mới đăng ở đáy kênh ngay khi khóa sổ (kèm ảnh), sau đó được cập nhật thành KẾT QUẢ
+        assert.ok(sentPayloads[0].files && sentPayloads[0].files.length > 0, 'Bảng mới phải có ảnh');
+        assert.match(extractCv2Text(sentPayloads[0]), /KHÓA SỔ|LẮC BÁT|3 ➔ 2 ➔ 1/i);
+        assert.ok(editedPayloads.length >= 1, 'Bảng mới phải được cập nhật tiếp thành bảng kết quả');
+        assert.ok(
+          editedPayloads.some((p) => /KẾT QUẢ PHIÊN/i.test(extractCv2Text(p))),
+          'Phải có bản cập nhật công bố KẾT QUẢ PHIÊN trên chính bảng mới ở đáy kênh'
+        );
+      } finally {
+        mp.shutdown();
+        await systems.db.close();
+      }
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

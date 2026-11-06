@@ -3171,7 +3171,10 @@ export class MultiplayerRoundSystem {
     this._lastRenderAt.set(key, this._now());
     try {
       const msg = await this._resolveBoardMessage(snapshot.round);
-      await this.boardRenderer(snapshot, { ...meta, message: msg });
+      // 📌 Khi khóa sổ (bắt đầu công bố kết quả): đăng bảng MỚI ở đáy kênh thay vì sửa bảng cũ,
+      // để người chơi thấy kết quả ngay mà không phải lướt lên.
+      const postNew = meta.phase === 'LOCKED' && Boolean(snapshot.round.channel_id);
+      await this.boardRenderer(snapshot, { ...meta, message: msg, postNew });
     } catch (err) {
       // AbortError / timeout mạng: chỉ ghi 1 dòng gọn (không xả stack trace rác console)
       const msgText = err?.name === 'AbortError' || /aborted/i.test(String(err?.message))
