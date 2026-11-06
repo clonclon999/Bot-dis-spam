@@ -1,4 +1,5 @@
 import { MessageFlags } from 'discord.js';
+import { applySlimEdit, rememberPanelAttachments } from '../utils/panelAttachments.js';
 import { buildCv2NoticePayload } from './componentsV2.js';
 import { THEME } from './theme.js';
 
@@ -102,11 +103,13 @@ export async function respondPrimary(interaction, payload, { withResponse = true
 }
 
 export async function safeUpdateV2(interaction, payload) {
+  // 🪶 Không tải lại ảnh nếu tin nhắn đã có sẵn đúng tệp đó (giảm 2–7 giây/tương tác trên VPS yếu)
+  const slim = applySlimEdit(payload, interaction?.message);
   const normalized = {
-    ...payload,
-    ...(payload.files && payload.files.length > 0
+    ...slim,
+    ...(slim.files && slim.files.length > 0
       ? {}
-      : payload.attachments !== undefined
+      : slim.attachments !== undefined
         ? {}
         : { attachments: [] }),
   };

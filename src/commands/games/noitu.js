@@ -57,7 +57,11 @@ async function editNoituBoardMessage(msg, payload) {
   if (!msg || typeof msg.edit !== 'function') return null;
   const normalized = {
     ...payload,
-    ...(payload.files && payload.files.length > 0 ? {} : { attachments: [] }),
+    ...(payload.files && payload.files.length > 0
+      ? {}
+      : payload.attachments !== undefined
+        ? {}
+        : { attachments: [] }),
   };
   return msg.edit(normalized).catch(() => null);
 }

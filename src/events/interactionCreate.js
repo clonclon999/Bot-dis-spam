@@ -26,6 +26,9 @@ const HEAVY_ACK_COMMAND_IDS = new Set([...ALL_GAME_COMMAND_IDS, 'game']);
 // Hạn chót ack an toàn: Discord chỉ cho 3 giây, ta tự ack trước mốc đó ~0.8 giây.
 const ACK_WATCHDOG_MS = 2_200;
 
+/** @type {Map<string, number>} loại tương tác -> lần cảnh báo độ trễ gần nhất (gộp log 30 giây) */
+const latencyWarnAt = new Map();
+
 /**
  * Xác định mã trò chơi từ Slash Command hoặc Component `customId` (nếu có).
  */
@@ -303,13 +306,21 @@ export async function safeHandleInteraction(interaction, context) {
   } finally {
     clearTimeout(ackTimer);
 
+    // 📊 Ghi log độ trễ GỌN GÀNG: chỉ cảnh báo khi thật sự đáng lo (> 3 giây) và gộp các cảnh báo
+    // trùng loại trong 30 giây để console không bị xả rác như trước.
     const elapsedMs = Date.now() - startedAt;
-    if (ackedByWatchdog || elapsedMs >= 1_500) {
-      logger.warn(
-        'InteractionLatency',
-        `Tương tác chậm ${elapsedMs}ms (${interaction?.commandName || interaction?.customId || 'unknown'})` +
-          `${ackedByWatchdog ? ' — đã tự động ack bằng deferReply để tránh lỗi "Ứng dụng không phản hồi"' : ''}`
-      );
+    const kind = interaction?.commandName || interaction?.customId || 'unknown';
+    if (ackedByWatchdog || elapsedMs >= 3_000) {
+      const now = Date.now();
+      const lastAt = latencyWarnAt.get(kind) ?? 0;
+      if (now - lastAt >= 30_000) {
+        latencyWarnAt.set(kind, now);
+        logger.warn(
+          'InteractionLatency',
+          `Tương tác chậm ${elapsedMs}ms (${kind})` +
+            `${ackedByWatchdog ? ' — đã tự ack bằng deferReply để tránh lỗi "Ứng dụng không phản hồi"' : ''}`
+        );
+      }
     }
   }
 }

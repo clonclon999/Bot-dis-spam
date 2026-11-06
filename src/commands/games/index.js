@@ -35,6 +35,7 @@ import {
 } from '../../ui/interactionHelpers.js';
 import { renderAttemptHearts, renderNeonBar, THEME } from '../../ui/theme.js';
 import { DEFAULT_RESULT_TTL_MS, globalPanelCleaner } from '../../utils/panelCleaner.js';
+import { applySlimEdit, rememberPanelAttachments } from '../../utils/panelAttachments.js';
 import {
   ASSET_PATHS,
   buildAssetAttachment,
@@ -91,11 +92,15 @@ function getSys(ctx) {
 }
 
 async function sendPanelReply(interaction, ctx, payload) {
+  let sentMessage = null;
   if (typeof ctx?.sendPanel === 'function') {
-    await ctx.sendPanel(interaction, payload);
+    sentMessage = await ctx.sendPanel(interaction, payload);
   } else {
-    await safeReplyV2(interaction, payload);
+    sentMessage = await safeReplyV2(interaction, payload);
   }
+  // 🧠 Ghi nhớ ảnh đã đăng để các lần cập nhật sau KHÔNG phải upload lại
+  rememberPanelAttachments(sentMessage ?? interaction?.message, payload);
+  return sentMessage;
 }
 
 function getBetBounds(db) {
@@ -113,9 +118,15 @@ function parseCleanAmount(raw) {
 
 function makeEditAdapter(interaction) {
   return async (payload) => {
+    // 🪶 Tái sử dụng ảnh đã có trên tin nhắn thay vì upload lại từng lần cập nhật
+    const slim = applySlimEdit(payload, interaction?.message);
     const normalized = {
-      ...payload,
-      ...(payload.files && payload.files.length > 0 ? {} : { attachments: [] }),
+      ...slim,
+      ...(slim.files && slim.files.length > 0
+        ? {}
+        : slim.attachments !== undefined
+          ? {}
+          : { attachments: [] }),
     };
     if (interaction.deferred || interaction.replied) {
       if (typeof interaction.editReply === 'function') {
