@@ -158,8 +158,11 @@ export async function handleInteractionCreate(interaction, context) {
     return;
   }
 
-  // 4. Giới hạn tốc độ thao tác chống spam liên thanh (Rate Limit 650ms)
-  const rl = globalGuard.checkRateLimit(userId, 650);
+  // 4. Giới hạn tốc độ thao tác chống spam liên thanh (Rate Limit 650ms).
+  // ⚠️ Trên VPS gói FREE mạng rất chậm (mỗi tương tác 5–18 giây), nên khi người chơi bấm
+  // 2 lần liên tiếp thì lần thứ 2 rơi vào "đang khóa" => KHÔNG chặn nữa (chỉ chặn khi thật sự
+  // spam dồn dập < 300ms) để không văng thông báo "Thao tác quá nhanh" vô cớ.
+  const rl = globalGuard.checkRateLimit(userId, interaction.isChatInputCommand?.() ? 650 : 300);
   if (!rl.allowed) {
     await safeReplyV2(
       interaction,
@@ -216,7 +219,19 @@ export async function handleInteractionCreate(interaction, context) {
     await routeComponentInteraction(interaction, context);
   });
 
+  // 🔓 Nếu người chơi bấm nút mới trong lúc tương tác trước chưa xong (mạng chậm 5–18s):
+  // không chặn cứng nữa (trước đây chỉ hiện "Đang xử lý giao dịch trước đó" rồi bỏ luôn thao tác),
+  // mà vẫn cố xử lý để người chơi không bị mất lượt bấm.
   if (!locked.acquired) {
+    if (!isChatCmd) {
+      try {
+        installReplyFallback(interaction);
+        await routeComponentInteraction(interaction, context);
+      } catch (err) {
+        logger.warn('InteractionConcurrency', `Xử lý song song thất bại: ${err?.message || err}`);
+      }
+      return;
+    }
     logSystem?.send(
       LOG_CATEGORIES.ANTICHEAT,
       `Phát hiện xung đột thao tác đồng thời (Concurrent Click) từ <@${userId}> (\`${userId}\`). Hệ thống đã tự động chặn giao dịch trùng.`

@@ -109,6 +109,15 @@ export class MultiplayerRoundSystem {
     /** @type {Map<string, object>} `${channelId}:${messageId}` -> cached Message reference */
     this._messageRefs = new Map();
 
+    /** @type {Map<string, any>} roundId -> cached Channel reference (tránh fetch lặp) */
+    this._channelRefs = new Map();
+
+    /** @type {Set<string>} roundId đã fetch tin nhắn thất bại (không thử lại) */
+    this._messageFetchFailed = new Set();
+
+    /** @type {Set<string>} `${guildId}:${gameId}` đang dọn bảng cũ */
+    this._cleanupInFlight = new Set();
+
     /** @type {Map<string, number | 'modal' | 'all'>} userId -> quick-chip preference */
     this._userChipPrefs = new Map();
 
@@ -141,6 +150,24 @@ export class MultiplayerRoundSystem {
     return this._userChipPrefs.get(String(userId)) ?? 'modal';
   }
 
+  /**
+   * Ghi nhớ kênh của phiên (tránh phải `channels.fetch` — mỗi lần fetch mất ~200–700ms trên VPS yếu).
+   * @param {string} roundId
+   * @param {any} channel
+   */
+  registerRoundChannel(roundId, channel) {
+    if (!roundId || !channel) return;
+    this._channelRefs.set(String(roundId), channel);
+  }
+
+  /**
+   * Lấy kênh đã ghi nhớ của phiên (nếu có).
+   * @param {string} roundId
+   */
+  getRoundChannel(roundId) {
+    return this._channelRefs.get(String(roundId)) || null;
+  }
+
   registerMessageRef(roundId, message) {
     if (!roundId || !message) return;
     this._messageRefs.set(String(roundId), message);
@@ -170,6 +197,18 @@ export class MultiplayerRoundSystem {
    */
   async cleanupPreviousRoundBoards(guildId, gameId, excludeRoundId, extraMsg = null) {
     if (!guildId || !gameId) return 0;
+    // 🪶 Tránh chạy chồng: mỗi trò chỉ 1 lượt dọn tại một thời điểm (bớt tranh chấp API)
+    const lockKey = `${guildId}:${gameId}`;
+    if (this._cleanupInFlight.has(lockKey)) return 0;
+    this._cleanupInFlight.add(lockKey);
+    try {
+      return await this._cleanupPreviousRoundBoardsInner(guildId, gameId, excludeRoundId, extraMsg);
+    } finally {
+      this._cleanupInFlight.delete(lockKey);
+    }
+  }
+
+  async _cleanupPreviousRoundBoardsInner(guildId, gameId, excludeRoundId, extraMsg = null) {
     const currentMsg = excludeRoundId ? this.getMessageRef(excludeRoundId) : null;
     const currentMsgId = currentMsg?.id ? String(currentMsg.id) : null;
     const deletedMsgIds = new Set();
@@ -181,7 +220,7 @@ export class MultiplayerRoundSystem {
          AND round_id != ?
          AND status IN (?, ?)
        ORDER BY created_at DESC
-       LIMIT 5`,
+       LIMIT 3`,
       [
         String(guildId),
         String(gameId),
@@ -192,7 +231,8 @@ export class MultiplayerRoundSystem {
     );
 
     for (const r of oldRounds) {
-      const msg = await this._resolveBoardMessage(r);
+      // 🪶 Chỉ xoá những bảng còn giữ ref trong RAM — không gọi mạng để dò lại tin nhắn cũ
+      const msg = this.getMessageRef(r.round_id);
       this.clearMessageRef(r.round_id);
       if (!msg || msg === currentMsg) continue;
       const mid = msg.id ? String(msg.id) : null;
@@ -2833,11 +2873,18 @@ export class MultiplayerRoundSystem {
    * Lấy đối tượng kênh Discord của phiên (cache trước, sau đó fetch).
    * @param {string} channelId
    */
-  async _resolveRoundChannel(channelId) {
-    if (!this.client || !channelId) return null;
+  async _resolveRoundChannel(channelId, roundId = null) {
+    if (!channelId) return null;
+    // Ưu tiên kênh đã ghi nhớ từ lúc mở phiên (0ms thay vì fetch ~200–700ms)
+    const remembered = roundId ? this._channelRefs.get(String(roundId)) : null;
+    if (remembered) return remembered;
+    if (!this.client) return null;
     try {
       const cached = this.client.channels?.cache?.get(String(channelId));
-      if (cached) return cached;
+      if (cached) {
+        if (roundId) this._channelRefs.set(String(roundId), cached);
+        return cached;
+      }
       if (typeof this.client.channels?.fetch === 'function') {
         // Giới hạn 2 giây: Discord API treo cũng không được giữ pipeline chốt phiên
         let timer = null;
@@ -2945,7 +2992,7 @@ export class MultiplayerRoundSystem {
     if (!round) return false;
     if (round.status !== MP_ROUND_STATUS.BETTING) return false;
 
-    const channel = await this._resolveRoundChannel(round.channel_id);
+    const channel = await this._resolveRoundChannel(round.channel_id, key);
     if (!channel || typeof channel.send !== 'function') return false;
 
     // Đánh dấu TRƯỚC khi gửi để 2 nhịp đồng thời không thể gửi trùng
@@ -3009,7 +3056,7 @@ export class MultiplayerRoundSystem {
 
     this._timeUpChat.set(key, this._now());
 
-    const channel = await this._resolveRoundChannel(round.channel_id);
+    const channel = await this._resolveRoundChannel(round.channel_id, key);
     if (!channel || typeof channel.send !== 'function') return false;
 
     const gameMeta = this._countdownGameMeta(round.game_id);
@@ -3107,7 +3154,7 @@ export class MultiplayerRoundSystem {
     this._roundTimers.set(key, timers);
   }
 
-  _scheduleBoardRender(roundId, delayMs = 350) {
+  _scheduleBoardRender(roundId, delayMs = 1_200) {
     const key = String(roundId);
     if (this._renderDebounce.has(key)) return;
     const cur = this.db.get('SELECT ends_at, status FROM multiplayer_rounds WHERE round_id = ?', [key]);
@@ -3126,7 +3173,10 @@ export class MultiplayerRoundSystem {
   async _resolveBoardMessage(round) {
     const cached = this._messageRefs.get(round.round_id);
     if (cached && typeof cached.edit === 'function') return cached;
+    // 🪶 Không có ref & không có message_id => chắc chắn không có bảng để sửa, KHÔNG gọi mạng
     if (!this.client || !round.channel_id || !round.message_id) return null;
+    // 🪶 Đã từng fetch thất bại trong phiên này => bỏ qua, tránh lặp lại lệnh mạng chậm 1–2 giây
+    if (this._messageFetchFailed.has(String(round.round_id))) return null;
 
     try {
       const channel =
@@ -3136,6 +3186,8 @@ export class MultiplayerRoundSystem {
       const msg = await channel.messages.fetch(round.message_id).catch(() => null);
       if (msg) {
         this._messageRefs.set(round.round_id, msg);
+      } else {
+        this._messageFetchFailed.add(String(round.round_id));
       }
       return msg;
     } catch {
@@ -3161,7 +3213,7 @@ export class MultiplayerRoundSystem {
     const throttleable = meta.phase === 'BET_UPDATE' || Boolean(meta.milestone);
     if (throttleable && meta.force !== true) {
       const lastAt = this._lastRenderAt.get(key) ?? 0;
-      if (this._now() - lastAt < 2_500) return;
+      if (this._now() - lastAt < 4_000) return;
     }
 
     const snapshot = this.getRoundSnapshot(roundId);
@@ -3628,6 +3680,9 @@ export class MultiplayerRoundSystem {
     this._finalizingSince.clear();
     this._renderInFlight.clear();
     this._lastRenderAt.clear();
+    this._channelRefs.clear();
+    this._messageFetchFailed.clear();
+    this._cleanupInFlight.clear();
     if (this._safetySweepTimer) {
       clearInterval(this._safetySweepTimer);
       this._safetySweepTimer = null;

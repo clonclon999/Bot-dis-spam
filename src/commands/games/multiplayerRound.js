@@ -1013,6 +1013,11 @@ export async function handlePublicStartRoundInteraction(
     if (sentMsg) {
       systems.multiplayerRoundSystem.registerMessageRef(startRes.round.round_id, sentMsg);
     }
+    // 🧠 Ghi nhớ kênh để chat đếm ngược / đăng bảng kết quả không phải fetch lại (tiết kiệm 200–700ms/lần)
+    systems.multiplayerRoundSystem.registerRoundChannel(
+      startRes.round.round_id,
+      interaction.channel ?? { id: interaction.channelId }
+    );
     await systems.multiplayerRoundSystem.cleanupPreviousRoundBoards?.(
       guildId,
       gameId,
@@ -1044,6 +1049,7 @@ export async function handlePublicStartRoundInteraction(
   }
 
   if (targetChannel && typeof targetChannel.send === 'function') {
+    systems.multiplayerRoundSystem.registerRoundChannel(startRes.round.round_id, targetChannel);
     const sentMsg = await sendBoardSafe(targetChannel);
     systems.multiplayerRoundSystem.registerMessageRef(startRes.round.round_id, sentMsg);
     await systems.multiplayerRoundSystem.cleanupPreviousRoundBoards?.(

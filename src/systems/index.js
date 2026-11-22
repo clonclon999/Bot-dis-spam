@@ -122,7 +122,10 @@ export async function createBotSystems(dataDir) {
     // 📌 ĐĂNG BẢNG MỚI Ở CUỐI KÊNH sau khi đếm ngược 3-2-1 kết thúc (khóa sổ / công bố kết quả):
     // người chơi không cần lướt lên trên để xem kết quả nữa. Bảng cũ được xoá để kênh gọn.
     if (meta.postNew) {
-      const channel = await multiplayerRoundSystem._resolveRoundChannel(snapshot.round.channel_id);
+      const channel = await multiplayerRoundSystem._resolveRoundChannel(
+        snapshot.round.channel_id,
+        snapshot.round.round_id
+      );
       if (channel && typeof channel.send === 'function') {
         const freshPayload = buildMultiplayerBoardPayload(snapshot, systems, { isEdit: false });
         // Giới hạn 8 giây: nếu Discord/kênh chậm quá thì bỏ qua việc đăng mới và chuyển sang
@@ -178,6 +181,10 @@ export async function createBotSystems(dataDir) {
       targetChannel =
         client.channels?.cache?.get(channelId) ||
         (await client.channels?.fetch?.(channelId).catch(() => null));
+    }
+
+    if (targetChannel) {
+      multiplayerRoundSystem.registerRoundChannel(newSnapshot.round.round_id, targetChannel);
     }
 
     if (hadPlayers && targetChannel && typeof targetChannel.send === 'function') {

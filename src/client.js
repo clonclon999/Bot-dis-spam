@@ -78,6 +78,17 @@ export function createBotClient({ env, systems, ...legacyDeps }) {
     } catch (err) {
       logger.warn('MultiplayerRecovery', 'Không khởi động được bộ quét an toàn phiên quá hạn', err);
     }
+
+    // 📊 Nhịp tim tài nguyên mỗi 5 phút: giúp phân biệt "bot chậm do code" hay "host quá tải"
+    const hb = setInterval(() => {
+      const mem = process.memoryUsage();
+      logger.info(
+        'Heartbeat',
+        `RAM RSS ${(mem.rss / 1048576).toFixed(0)} MB • Heap ${(mem.heapUsed / 1048576).toFixed(0)} MB • ` +
+          `Ping Gateway ${readyClient.ws.ping} ms • Guilds ${readyClient.guilds.cache.size}`
+      );
+    }, 300_000);
+    hb.unref?.();
   });
 
   client.on(Events.MessageCreate, (message) =>
