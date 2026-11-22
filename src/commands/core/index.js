@@ -26,6 +26,11 @@ import { ASSET_PATHS, buildAssetAttachment } from '../../utils/assetRegistry.js'
 import { formatVnd } from '../../utils/format.js';
 import { hasBotRole, resolveBotRole } from '../../utils/permissions.js';
 import { buildAdminDashboardPayload } from '../admin/index.js';
+import {
+  gayMeterAliasCommand,
+  gayMeterCommand,
+  handleGayMeterInteraction,
+} from './gayMeter.js';
 
 const HELP_CATEGORIES = {
   overview: {
@@ -109,6 +114,18 @@ const HELP_CATEGORIES = {
       '• `/protect [days]` — Mua Bảo Hiểm Chống Cướp bảo vệ ví tiền an toàn.',
       '• `/bounty <target> <amount>` — Treo thưởng Truy Nã lên mục tiêu.',
       '• `/wanted` — Xem Bảng Vàng Truy Nã toàn Server.',
+    ].join('\n'),
+  },
+  fun: {
+    label: 'Fun — Giải trí & Máy đo độ gay',
+    emoji: '🔮',
+    title: '🔮 Danh Mục FUN — Giải Trí & Máy Đo Độ Gay',
+    body: [
+      '• `/gay [nguoi_dung]` — Máy đo độ gay giải trí: mỗi ngày một chỉ số riêng (0–100%) kèm câu bình luận hài hước.',
+      '• `/dogay [nguoi_dung]` — Bí danh dễ nhớ của `/gay`, bấm là có ngay kết quả.',
+      '• 🔁 Nút **Đo Lại** trên bảng kết quả để đo lại (bấm quá nhanh sẽ được nhắc nhẹ).',
+      '• 👑 **Đặc quyền OWNER:** tài khoản `1243061570247069696` **luôn luôn 0%** — khóa cứng trong mã nguồn.',
+      '• 📌 Kết quả mang tính giải trí, dùng công nghệ băm ID + ngày nên không đổi trong cùng một ngày.',
     ].join('\n'),
   },
   admin: {
@@ -197,6 +214,7 @@ export const helpCommand = {
           { name: '📜 Quest (Nhiệm vụ & Sự kiện)', value: 'quest' },
           { name: '🛒 Shop (Cửa hàng & Thú cưng)', value: 'shop' },
           { name: '👤 Profile (Hồ sơ & Truy nã)', value: 'profile' },
+          { name: '🔮 Fun (Máy đo độ gay & giải trí)', value: 'fun' },
           { name: '🛡️ Admin (Quản trị, Kênh Game & Anti-Spam)', value: 'admin' }
         )
     ),
@@ -318,6 +336,9 @@ export const menuCommand = {
 };
 
 export async function handleCoreInteraction(interaction, ctx) {
+  // 🔮 Máy đo độ gay (nút Đo lại / Đóng)
+  if (await handleGayMeterInteraction(interaction, ctx)) return true;
+
   const id = interaction.customId || '';
   if (!id.startsWith('core:')) return false;
 
@@ -448,4 +469,4 @@ export async function handleCoreInteraction(interaction, ctx) {
   return false;
 }
 
-export const CORE_COMMANDS = [helpCommand, menuCommand];
+export const CORE_COMMANDS = [helpCommand, menuCommand, gayMeterCommand, gayMeterAliasCommand];
