@@ -26,7 +26,7 @@ const HEAVY_ACK_COMMAND_IDS = new Set([...ALL_GAME_COMMAND_IDS, 'game']);
 // Hạn chót ack an toàn: Discord chỉ cho 3 giây, ta tự ack trước mốc đó ~0.8 giây.
 const ACK_WATCHDOG_MS = 2_200;
 
-/** @type {Map<string, number>} loại tương tác -> lần cảnh báo độ trễ gần nhất (gộp log 30 giây) */
+/** @type {Map<string, number>} lần cảnh báo độ trễ gần nhất (gộp TOÀN BỘ loại trong 60 giây) */
 const latencyWarnAt = new Map();
 
 /**
@@ -321,21 +321,32 @@ export async function safeHandleInteraction(interaction, context) {
   } finally {
     clearTimeout(ackTimer);
 
-    // 📊 Ghi log độ trễ GỌN GÀNG: chỉ cảnh báo khi thật sự đáng lo (> 3 giây) và gộp các cảnh báo
-    // trùng loại trong 30 giây để console không bị xả rác như trước.
+    // 📊 Ghi log độ trễ GỌN GÀNG: chỉ cảnh báo khi THẬT SỰ đáng lo và gộp mọi cảnh báo trong 60 giây.
+    //
+    // 📌 Cách đo chuẩn: tính từ mốc Discord phát hành tương tác (`interaction.createdTimestamp`),
+    // nên phần "bot chưa kịp nhận" (do host/mạng chậm nạp) KHÔNG bị tính là bot xử lý chậm.
+    // Phần bot thực sự chạy là `elapsedMs` (từ lúc nhận tới lúc xong).
     const elapsedMs = Date.now() - startedAt;
+    const receivedLateMs = Math.max(0, startedAt - (Number(interaction?.createdTimestamp) || startedAt));
     const kind = interaction?.commandName || interaction?.customId || 'unknown';
-    if (ackedByWatchdog || elapsedMs >= 3_000) {
+    const SLOW_WARN_MS = 6_000;
+    if (elapsedMs >= SLOW_WARN_MS) {
       const now = Date.now();
-      const lastAt = latencyWarnAt.get(kind) ?? 0;
-      if (now - lastAt >= 30_000) {
-        latencyWarnAt.set(kind, now);
+      const lastAt = latencyWarnAt.get('__any__') ?? 0;
+      if (now - lastAt >= 60_000) {
+        latencyWarnAt.set('__any__', now);
         logger.warn(
           'InteractionLatency',
-          `Tương tác chậm ${elapsedMs}ms (${kind})` +
-            `${ackedByWatchdog ? ' — đã tự ack bằng deferReply để tránh lỗi "Ứng dụng không phản hồi"' : ''}`
+          `Bot xử lý chậm ${elapsedMs}ms (${kind})` +
+            ` — phần lớn do mạng/host chậm (nhận trễ ${receivedLateMs}ms). Đã tự ack an toàn.`
         );
       }
+    } else if (receivedLateMs >= 3_000) {
+      // Bot xử lý nhanh nhưng Discord giao tương tác tới trễ => ghi 1 dòng DEBUG (không phải WARN)
+      logger.debug?.(
+        'InteractionLatency',
+        `Nhận tương tác trễ ${receivedLateMs}ms (${kind}) nhưng bot chỉ xử lý ${elapsedMs}ms — do đường truyền host.`
+      );
     }
   }
 }
